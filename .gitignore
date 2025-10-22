@@ -3,4 +3,3 @@
 /backend/*.pyc
 /backend/.env
 /frontend/node_modules/
-/frontend/
