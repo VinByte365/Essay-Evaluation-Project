@@ -1,7 +1,7 @@
 from flask import Flask
 from flask_cors import CORS
 from .config import Config
-from .extensions import mongo, init_nlp
+from .extensions import mongo, init_nlp, init_detector
 
 def create_app(config_class=Config):
     app = Flask(__name__)
@@ -13,6 +13,7 @@ def create_app(config_class=Config):
 
     with app.app_context():
         init_nlp()
+        init_detector()
 
     from .routes.api import api_bp
     app.register_blueprint(api_bp, url_prefix='/api')
