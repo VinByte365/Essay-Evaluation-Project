@@ -19,25 +19,27 @@ export default function EssayUpload({ onCancel, onUpload, user }) {
 
     setLoading(true);
     setError(null);
+    setEvaluationData(null);
 
     try {
       const formData = new FormData();
       formData.append("file", file);
 
+      console.log("Starting evaluation for:", file.name);
+
       const response = await api.post("/api/upload-essay", formData, {
         headers: {
-          "Content-Type": "form-data",
+          "Content-Type": "multipart/form-data",
         },
       });
 
       const data = response.data;
+      console.log("Evaluation data received:", data);
       
-      if (data.success) {
+      if (data && data.score !== undefined) {
         setEvaluationData(data);
-        console.log("Evaluation data:", data);
       } else {
-        console.log("Evaluation data:", data);
-        setError(data.error || "Evaluation failed");
+        setError("Evaluation failed - invalid response format");
       }
       
     } catch (err) {
@@ -45,7 +47,15 @@ export default function EssayUpload({ onCancel, onUpload, user }) {
       setError(err.response?.data?.error || "Failed to evaluate essay. Please try again.");
     } finally {
       setLoading(false);
+      console.log("Evaluation process completed");
     }
+  }
+
+  function handleFileChange(e) {
+    const selectedFile = e.target.files[0];
+    setFile(selectedFile);
+    setEvaluationData(null); // Reset evaluation when new file selected
+    setError(null);
   }
 
   function handleSubmit() {
@@ -54,10 +64,11 @@ export default function EssayUpload({ onCancel, onUpload, user }) {
       author: user.username,
       authorId: user.id,
       caption,
-      content: evaluationData?.text_preview || "Essay content...",
+      content: "Essay content",
       likes: 0,
       comments: 0,
       visibility,
+      score: evaluationData.score,
       evaluationData,
     };
     onUpload(newEssay);
@@ -81,9 +92,16 @@ export default function EssayUpload({ onCancel, onUpload, user }) {
           <input
             type="file"
             accept=".txt,.docx"
-            onChange={(e) => setFile(e.target.files[0])}
+            onChange={handleFileChange}
             className={styles.fileInput}
+            key={evaluationData ? "reset" : "initial"} // Force re-render
           />
+          
+          {file && (
+            <p className={styles.fileName}>
+              Selected: <strong>{file.name}</strong>
+            </p>
+          )}
           
           {error && <div className={styles.error}>{error}</div>}
           
@@ -112,17 +130,18 @@ export default function EssayUpload({ onCancel, onUpload, user }) {
                 <h4>📝 Grammar Analysis</h4>
                 <div className={styles.stat}>
                   <span className={styles.label}>Total Errors:</span>
-                  <span className={styles.value}>{evaluationData.grammar.total_errors}</span>
+                  <span className={styles.value}>{evaluationData.total_grammar_errors}</span>
                 </div>
-                {evaluationData.grammar.errors.length > 0 && (
+                {evaluationData.error_feedback && evaluationData.error_feedback.length > 0 && (
                   <div className={styles.errorList}>
                     <p className={styles.errorTitle}>Top Issues:</p>
-                    {evaluationData.grammar.errors.slice(0, 3).map((err, idx) => (
+                    {evaluationData.error_feedback.slice(0, 3).map((err, idx) => (
                       <div key={idx} className={styles.errorItem}>
                         <p className={styles.errorMsg}>• {err.message}</p>
-                        {err.replacements.length > 0 && (
+                        <p className={styles.errorContext}>{err.context}</p>
+                        {err.replacements && err.replacements.length > 0 && (
                           <p className={styles.suggestion}>
-                            Suggestion: {err.replacements[0]}
+                            Suggestions: {err.replacements.slice(0, 3).join(", ")}
                           </p>
                         )}
                       </div>
@@ -136,20 +155,20 @@ export default function EssayUpload({ onCancel, onUpload, user }) {
                 <h4>📊 Linguistic Statistics</h4>
                 <div className={styles.statsGrid}>
                   <div className={styles.stat}>
-                    <span className={styles.label}>Word Count:</span>
-                    <span className={styles.value}>{evaluationData.word_count}</span>
+                    <span className={styles.label}>Sentences:</span>
+                    <span className={styles.value}>{evaluationData.num_sentences}</span>
                   </div>
                   <div className={styles.stat}>
-                    <span className={styles.label}>Sentences:</span>
-                    <span className={styles.value}>{evaluationData.linguistics.num_sentences}</span>
+                    <span className={styles.label}>Total Tokens:</span>
+                    <span className={styles.value}>{evaluationData.num_tokens}</span>
                   </div>
                   <div className={styles.stat}>
                     <span className={styles.label}>Avg Sentence Length:</span>
-                    <span className={styles.value}>{evaluationData.linguistics.avg_sentence_length} words</span>
+                    <span className={styles.value}>{evaluationData.avg_sentence_length.toFixed(2)} words</span>
                   </div>
                   <div className={styles.stat}>
                     <span className={styles.label}>Named Entities:</span>
-                    <span className={styles.value}>{evaluationData.linguistics.num_entities}</span>
+                    <span className={styles.value}>{evaluationData.num_entities}</span>
                   </div>
                 </div>
               </div>
@@ -161,22 +180,16 @@ export default function EssayUpload({ onCancel, onUpload, user }) {
                   <div className={styles.stat}>
                     <span className={styles.label}>Classification:</span>
                     <span className={`${styles.value} ${styles.aiLabel}`}>
-                      {evaluationData.ai_detection.label}
+                      {evaluationData.ai_detection_label}
                     </span>
                   </div>
                   <div className={styles.stat}>
                     <span className={styles.label}>Confidence:</span>
                     <span className={styles.value}>
-                      {(evaluationData.ai_detection.confidence * 100).toFixed(1)}%
+                      {(evaluationData.ai_detection_score * 100).toFixed(2)}%
                     </span>
                   </div>
                 </div>
-              </div>
-
-              {/* Text Preview */}
-              <div className={styles.section}>
-                <h4>📄 Text Preview</h4>
-                <p className={styles.textPreview}>{evaluationData.text_preview}...</p>
               </div>
             </div>
           )}
@@ -199,12 +212,19 @@ export default function EssayUpload({ onCancel, onUpload, user }) {
               />
               Friends
             </label>
+            <label className={styles.radioLabel}>
+              <input
+                type="radio"
+                checked={visibility === "private"}
+                onChange={() => setVisibility("private")}
+              />
+              Private
+            </label>
           </div>
           
           <button
             className={styles.button}
             onClick={handleSubmit}
-            disabled={!evaluationData || !caption}
           >
             Upload to Feed
           </button>

@@ -9,7 +9,14 @@ def create_app(config_class=Config):
     app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB
  
     mongo.init_app(app)
-    CORS(app)
+    CORS(app, resources={
+    r"/api/*": {
+        "origins": ["http://localhost:5173", "http://127.0.0.1:5173"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
 
     with app.app_context():
         init_nlp()
