@@ -11,7 +11,7 @@ def create_app(config_class=Config):
     mongo.init_app(app)
     CORS(app, resources={
     r"/api/*": {
-        "origins": ["http://localhost:5173", "http://127.0.0.1:5173"],
+        "origins": ["http://localhost:3000", "http://127.0.0.1:3000"],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "supports_credentials": True
@@ -24,5 +24,8 @@ def create_app(config_class=Config):
 
     from .routes.api import api_bp
     app.register_blueprint(api_bp, url_prefix='/api')
+
+    from app.routes.posts import posts_bp
+    app.register_blueprint(posts_bp, url_prefix='/api')
 
     return app
