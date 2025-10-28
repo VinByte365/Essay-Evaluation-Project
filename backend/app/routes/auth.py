@@ -4,6 +4,10 @@ import jwt
 from app.models import User
 from app import mongo
 import os
+from bson import ObjectId
+from werkzeug.security import check_password_hash, generate_password_hash
+
+
 
 auth_bp = Blueprint('auth', __name__)
 user_model = User(mongo.db)
@@ -67,7 +71,6 @@ def register():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @auth_bp.route('/login', methods=['POST', 'OPTIONS'])
 def login():
     if request.method == 'OPTIONS':
@@ -103,7 +106,6 @@ def login():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @auth_bp.route('/me', methods=['GET', 'OPTIONS'])
 def get_current_user():
     if request.method == 'OPTIONS':
@@ -132,8 +134,9 @@ def get_current_user():
     
     return jsonify({'user': user}), 200
 
-@auth_bp.route('/profile', methods=['PUT', 'OPTIONS'])
+@auth_bp.route('/profile', methods=['PUT', 'OPTIONS'])  # ← Remove /auth/ 
 def update_profile():
+    """Update user profile information"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
@@ -186,11 +189,12 @@ def update_profile():
         }), 200
         
     except Exception as e:
+        print(f"Error updating profile: {str(e)}")  # ← Add logging
         return jsonify({'error': str(e)}), 500
-
 
 @auth_bp.route('/change-password', methods=['POST', 'OPTIONS'])
 def change_password():
+    """Change user password"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
@@ -232,4 +236,61 @@ def change_password():
         return jsonify({'message': 'Password changed successfully'}), 200
         
     except Exception as e:
+        print(f"Error changing password: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@auth_bp.route('/users/<user_id>/stats', methods=['GET', 'OPTIONS'])
+def get_user_stats(user_id):
+    """Get user's public statistics"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        return response, 200
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({'error': 'No token provided'}), 401
+    
+    token = auth_header.split(' ')[1]
+    current_user_id = verify_token(token)
+    
+    if not current_user_id:
+        return jsonify({'error': 'Invalid token'}), 401
+    
+    try:
+        # Get user's public or friends-visible essays based on friendship status
+        current_user = mongo.db.users.find_one({'_id': ObjectId(current_user_id)})
+        friends_list = current_user.get('friends', [])
+        
+        # Determine if current user can view this user's stats
+        if user_id == current_user_id or user_id in friends_list:
+            # Can view full stats
+            essays = list(mongo.db.essays.find({'user_id': user_id}))
+        else:
+            # Can only view public essays (essays that are shared publicly)
+            public_posts = list(mongo.db.posts.find({
+                'author_id': user_id,
+                'visibility': 'public'
+            }))
+            essay_ids = [post.get('essay_id') for post in public_posts]
+            essays = list(mongo.db.essays.find({'_id': {'$in': [ObjectId(eid) for eid in essay_ids]}}))
+        
+        # Calculate stats
+        completed = [e for e in essays if e.get('status') == 'completed']
+        scores = [e.get('score', 0) for e in completed if e.get('score', 0) > 0]
+        
+        avg_score = round(sum(scores) / len(scores)) if scores else 0
+        high_score = max(scores) if scores else 0
+        
+        return jsonify({
+            'total_essays': len(essays),
+            'completed_essays': len(completed),
+            'average_score': avg_score,
+            'highest_score': high_score
+        }), 200
+        
+    except Exception as e:
+        print(f"Error fetching user stats: {str(e)}")
         return jsonify({'error': str(e)}), 500

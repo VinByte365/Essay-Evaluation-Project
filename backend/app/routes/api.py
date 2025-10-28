@@ -4,27 +4,42 @@ import spacy
 import language_tool_python
 from app.models.essay import Essay
 from bson import ObjectId
+from app.routes.auth import verify_token 
 
 api_bp = Blueprint('api', __name__)
 
 # Initialize NLP tools
 nlp = spacy.load("en_core_web_sm")
-tool = language_tool_python.LanguageTool('en-US')
+tool = language_tool_python.LanguageToolPublicAPI('en-US')
 
-# Initialize MongoDB (assuming you have db connection)
-from app import mongo  # Import your MongoDB connection
+# Initialize MongoDB
+from app import mongo
 essay_model = Essay(mongo.db)
+
 
 @api_bp.route('/upload-essay', methods=['POST', 'OPTIONS'])
 def upload_essay():
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
         response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
         return response, 200
     
     try:
+        # Get user_id from JWT token
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'No token provided'}), 401
+        
+        token = auth_header.split(' ')[1]
+        user_id = verify_token(token)
+        
+        if not user_id:
+            return jsonify({'error': 'Invalid token'}), 401
+        
+        print(f"📝 Uploading essay for user: {user_id}")
+        
         # 1. Validate file
         if 'file' not in request.files:
             return jsonify({'error': 'No file part in request'}), 400
@@ -32,9 +47,6 @@ def upload_essay():
         file = request.files['file']
         if file.filename == '':
             return jsonify({'error': 'No selected file'}), 400
-
-        # Get user ID from session/auth (for now, use a test user)
-        user_id = request.headers.get('X-User-Id', 'test_user')
         
         # 2. Extract text
         if file.filename.endswith('.txt'):
@@ -50,11 +62,11 @@ def upload_essay():
         # Get title from filename
         title = file.filename.rsplit('.', 1)[0]
         
-        # 3. Create essay record in DB with "evaluating" status
+        # 3. Create essay record in DB with full content
         essay = essay_model.create(
             user_id=user_id,
             title=title,
-            content=text[:500],  # Store preview
+            content=text,  # Save full content
             file_name=secure_filename(file.filename)
         )
         
@@ -132,33 +144,106 @@ def get_essays():
         return jsonify({'error': 'No token provided'}), 401
     
     token = auth_header.split(' ')[1]
-    user_id = verify_token(token)  # ← Use JWT verification
+    user_id = verify_token(token)
     
     if not user_id:
         return jsonify({'error': 'Invalid token'}), 401
     
+    print(f"📚 Fetching essays for user: {user_id}")
+    
     essays = essay_model.get_by_user(user_id)
+    print(f"📄 Found {len(essays)} essays")
+    
     return jsonify({'essays': essays}), 200
 
 
-
-@api_bp.route('/essays/<essay_id>', methods=['GET'])
-def get_essay(essay_id):
-    """Get a specific essay"""
-    try:
-        essay = essay_model.get_by_id(essay_id)
-        if not essay:
-            return jsonify({'error': 'Essay not found'}), 404
-        return jsonify(essay), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-
-@api_bp.route('/essays/<essay_id>', methods=['DELETE'])
-def delete_essay(essay_id):
-    """Delete an essay"""
-    try:
-        essay_model.delete(essay_id)
-        return jsonify({'message': 'Essay deleted'}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+@api_bp.route('/essays/<essay_id>', methods=['GET', 'DELETE', 'OPTIONS'])
+def handle_essay(essay_id):
+    """Get or delete a specific essay"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, DELETE, OPTIONS')
+        return response, 200
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({'error': 'No token provided'}), 401
+    
+    token = auth_header.split(' ')[1]
+    user_id = verify_token(token)
+    
+    if not user_id:
+        return jsonify({'error': 'Invalid token'}), 401
+    
+    # Handle GET request
+    if request.method == 'GET':
+        try:
+            essay = mongo.db.essays.find_one({'_id': ObjectId(essay_id)})
+            
+            if not essay:
+                return jsonify({'error': 'Essay not found'}), 404
+            
+            # Check visibility permissions
+            if essay['user_id'] != user_id:
+                # Check if this essay has been shared as a post
+                post = mongo.db.posts.find_one({'essay_id': essay_id})
+                if not post:
+                    return jsonify({'error': 'Unauthorized'}), 403
+                
+                # Check post visibility
+                if post['visibility'] == 'public':
+                    # Public posts are accessible to everyone
+                    pass
+                elif post['visibility'] == 'friends':
+                    # ✅ UPDATED: Check if users are friends
+                    current_user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+                    friends_list = current_user.get('friends', [])
+                    
+                    if post['author_id'] not in friends_list:
+                        return jsonify({'error': 'Unauthorized - Friends only'}), 403
+                else:
+                    return jsonify({'error': 'Unauthorized'}), 403
+            
+            essay_data = {
+                'id': str(essay['_id']),
+                'title': essay.get('title', 'Untitled'),
+                'content': essay.get('content', ''),
+                'upload_date': essay.get('upload_date'),
+                'status': essay.get('status', 'completed'),
+                'score': essay.get('score'),
+                'feedback': essay.get('feedback'),
+                'user_id': essay.get('user_id')
+            }
+            
+            return jsonify(essay_data), 200
+            
+        except Exception as e:
+            print(f"Error fetching essay: {str(e)}")
+            return jsonify({'error': str(e)}), 400
+    
+    # Handle DELETE request (keep existing code)
+    elif request.method == 'DELETE':
+        try:
+            essay = mongo.db.essays.find_one({'_id': ObjectId(essay_id)})
+            
+            if not essay:
+                return jsonify({'error': 'Essay not found'}), 404
+            
+            if essay['user_id'] != user_id:
+                return jsonify({'error': 'Unauthorized'}), 403
+            
+            deleted_posts = mongo.db.posts.delete_many({'essay_id': essay_id})
+            print(f"🗑️ Deleted {deleted_posts.deleted_count} posts associated with essay {essay_id}")
+            
+            mongo.db.essays.delete_one({'_id': ObjectId(essay_id)})
+            
+            return jsonify({
+                'message': 'Essay deleted successfully',
+                'deleted_posts': deleted_posts.deleted_count
+            }), 200
+            
+        except Exception as e:
+            print(f"Error deleting essay: {str(e)}")
+            return jsonify({'error': str(e)}), 500

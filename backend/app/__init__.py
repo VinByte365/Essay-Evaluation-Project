@@ -28,4 +28,12 @@ def create_app(config_class=Config):
     from app.routes.posts import posts_bp
     app.register_blueprint(posts_bp, url_prefix='/api')
 
+    from app.routes.auth import auth_bp
+    app.register_blueprint(auth_bp, url_prefix='/api/auth')
+
+    from app.routes.friends import friends_bp
+    app.register_blueprint(friends_bp, url_prefix='/api')
+
+    from app.routes.search import search_bp
+    app.register_blueprint(search_bp, url_prefix='/api')
     return app

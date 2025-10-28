@@ -1,6 +1,7 @@
 from datetime import datetime
 from bson import ObjectId
 
+
 class Post:
     def __init__(self, db):
         self.collection = db['posts']
@@ -22,17 +23,35 @@ class Post:
             'shares': 0,
         }
         
+        # If friends-only post, store the author's friends list
+        if visibility == "friends":
+            from app.models import User
+            user_model = User(self.collection.database)
+            user = user_model.get_by_id(author_id)
+            post['author_friends'] = user.get('friends', [])  # Array of friend user IDs
+        
         result = self.collection.insert_one(post)
         post['_id'] = str(result.inserted_id)
         return post
     
     def get_feed(self, user_id, limit=50):
-        """Get posts for user's feed (public + friends' posts)"""
-        # For now, return all public posts
-        # TODO: Add friends logic
-        posts = list(self.collection.find(
-            {'visibility': 'public'}
-        ).sort('shared_at', -1).limit(limit))
+        """Get posts for user's feed (own posts + public + friends' posts)"""
+        from bson import ObjectId
+        
+        # Convert user_id to ObjectId if it's a string
+        user_oid = ObjectId(user_id) if isinstance(user_id, str) else user_id
+        
+        # Query: Show user's own posts + public posts + friends-only posts where user is a friend
+        posts = list(self.collection.find({
+            "$or": [
+                {"author_id": str(user_id)},      # User's own posts (all visibility levels)
+                {"visibility": "public"},          # Public posts from everyone
+                {
+                    "visibility": "friends",       # Friends-only posts
+                    "author_friends": str(user_id) # Where current user is in friends list
+                }
+            ]
+        }).sort('shared_at', -1).limit(limit))
         
         for post in posts:
             post['_id'] = str(post['_id'])
