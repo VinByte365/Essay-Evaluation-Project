@@ -1,5 +1,5 @@
 from flask import Flask, send_from_directory
-from flask_cors import CORS
+from flask_cors import CORS, cross_origin
 import os
 from .config import Config
 from .extensions import mongo, init_nlp
@@ -11,19 +11,18 @@ def create_app(config_class=Config):
     app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB
  
     mongo.init_app(app)
-    CORS(app, resources={
-        r"/api/*": {
-            "origins": ["http://localhost:3000", "http://127.0.0.1:3000"],
-            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            "allow_headers": ["Content-Type", "Authorization"],
-            "supports_credentials": True
-        },
-        r"/uploads/*": {  # Add CORS for uploads
-            "origins": ["http://localhost:3000", "http://127.0.0.1:3000"],
-            "methods": ["GET", "OPTIONS"],
-            "allow_headers": ["Content-Type"],
-        }
-    })
+    
+    # ✅ More aggressive CORS configuration
+    app.config['CORS_HEADERS'] = 'Content-Type'
+    
+    CORS(app, 
+         resources={r"/*": {"origins": "*"}},
+         supports_credentials=False,
+         allow_headers=['Content-Type', 'Authorization'],
+         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+         expose_headers=['Content-Type', 'Authorization'])
+    
+    print("🔧 CORS configured: ALL methods enabled for ALL origins")
 
     # Configure upload folder
     UPLOAD_FOLDER = 'uploads/avatars'
@@ -35,10 +34,6 @@ def create_app(config_class=Config):
     def uploaded_file(filename):
         """Serve uploaded avatar files"""
         upload_path = os.path.join(os.getcwd(), app.config['UPLOAD_FOLDER'])
-        print(f"🔍 Serving file: {filename}")
-        print(f"📂 From directory: {upload_path}")
-        print(f"📂 Full path: {os.path.join(upload_path, filename)}")
-        print(f"📂 File exists: {os.path.exists(os.path.join(upload_path, filename))}")
         return send_from_directory(upload_path, filename)
 
     with app.app_context():

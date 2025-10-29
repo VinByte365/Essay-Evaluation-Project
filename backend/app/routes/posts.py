@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify
+from flask_cors import cross_origin
 from app.models import Post, Essay
 from app.routes.auth import verify_token
 from app import mongo
@@ -93,7 +94,6 @@ def get_posts():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-
 @posts_bp.route('/posts', methods=['POST', 'OPTIONS'])
 def create_post():
     """Share an essay as a post"""
@@ -158,7 +158,6 @@ def create_post():
         print(f"Error creating post: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-
 @posts_bp.route('/posts/<post_id>/like', methods=['POST', 'OPTIONS'])
 def like_post(post_id):
     """Toggle like on a post (like/unlike)"""
@@ -208,7 +207,6 @@ def like_post(post_id):
         print(f"Error toggling like: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-
 @posts_bp.route('/posts/<post_id>/check-like', methods=['GET', 'OPTIONS'])
 def check_like_status(post_id):
     """Check if current user has liked a post"""
@@ -244,16 +242,8 @@ def check_like_status(post_id):
         print(f"Error checking like status: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-
-@posts_bp.route('/posts/<post_id>/comment', methods=['POST', 'OPTIONS'])
+@posts_bp.route('/posts/<post_id>/comment', methods=['POST'])
 def comment_post(post_id):
-    if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        return response, 200
-    
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
         return jsonify({'error': 'No token provided'}), 401
@@ -272,11 +262,22 @@ def comment_post(post_id):
         data = request.get_json()
         comment_text = data.get('comment')
         
-        post_model.add_comment(post_id, user_id, user['name'], comment_text)
+        # ✅ Create comment with timestamp
+        comment = {
+            'user_id': user_id,
+            'text': comment_text,
+            'created_at': datetime.now().isoformat()  # ✅ Add timestamp
+        }
+        
+        # Add comment to post
+        mongo.db.posts.update_one(
+            {'_id': ObjectId(post_id)},
+            {'$push': {'comments': comment}}
+        )
+        
         return jsonify({'message': 'Comment added'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @posts_bp.route('/posts/<post_id>/comments', methods=['GET', 'OPTIONS'])
 def get_comments(post_id):
@@ -324,7 +325,6 @@ def get_comments(post_id):
     except Exception as e:
         print(f"Error fetching comments: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
 
 @posts_bp.route('/posts/my-posts', methods=['GET', 'OPTIONS'])
 def get_my_posts():
@@ -377,4 +377,189 @@ def get_my_posts():
         
     except Exception as e:
         print(f"Error fetching user posts: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@posts_bp.route('/posts/<post_id>/share', methods=['POST', 'OPTIONS'])
+def share_post(post_id):
+    """Share/reshare a post to your feed"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        return response, 200
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({'error': 'No token provided'}), 401
+    
+    token = auth_header.split(' ')[1]
+    user_id = verify_token(token)
+    
+    if not user_id:
+        return jsonify({'error': 'Invalid token'}), 401
+    
+    try:
+        data = request.get_json()
+        share_caption = data.get('caption', '')
+        
+        # Get original post
+        original_post = mongo.db.posts.find_one({'_id': ObjectId(post_id)})
+        if not original_post:
+            return jsonify({'error': 'Post not found'}), 404
+        
+        # Check if user already shared this post
+        existing_share = mongo.db.posts.find_one({
+            'author_id': user_id,
+            'original_post_id': post_id,
+            'is_share': True
+        })
+        
+        if existing_share:
+            return jsonify({'error': 'You already shared this post'}), 400
+        
+        # Get current user details
+        user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+        
+        # Get essay details
+        essay = mongo.db.essays.find_one({'_id': ObjectId(original_post['essay_id'])})
+        
+        # Create shared post
+        shared_post = {
+            'author_id': user_id,
+            'author_name': user.get('name', 'Unknown'),
+            'author_email': user.get('email', ''),
+            'essay_id': original_post['essay_id'],
+            'essay_title': essay.get('title', 'Untitled'),
+            'essay_score': essay.get('score', 0),
+            'caption': share_caption,
+            'visibility': 'public',  # Shares are always public
+            'shared_at': datetime.now(),
+            'likes': [],
+            'comments': [],
+            'shares': 0,
+            'is_share': True,  # Flag to identify as shared post
+            'original_post_id': post_id,  # Reference to original post
+            'original_author_id': original_post['author_id'],
+            'original_author_name': original_post.get('author_name', 'Unknown')
+        }
+        
+        result = mongo.db.posts.insert_one(shared_post)
+        
+        # Increment share count on original post
+        mongo.db.posts.update_one(
+            {'_id': ObjectId(post_id)},
+            {'$inc': {'shares': 1}}
+        )
+        
+        return jsonify({
+            'message': 'Post shared successfully',
+            'post_id': str(result.inserted_id)
+        }), 201
+        
+    except Exception as e:
+        print(f"Error sharing post: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@posts_bp.route('/posts/<post_id>', methods=['PUT', 'DELETE'])
+def manage_post(post_id):
+    """Update or delete a post"""
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({'error': 'No token provided'}), 401
+    
+    token = auth_header.split(' ')[1]
+    user_id = verify_token(token)
+    
+    if not user_id:
+        return jsonify({'error': 'Invalid token'}), 401
+    
+    # Get the post
+    post = mongo.db.posts.find_one({'_id': ObjectId(post_id)})
+    
+    if not post:
+        return jsonify({'error': 'Post not found'}), 404
+    
+    # Check ownership
+    if post['author_id'] != user_id:
+        return jsonify({'error': 'You can only edit/delete your own posts'}), 403
+    
+    # Handle DELETE
+    if request.method == 'DELETE':
+        try:
+            result = mongo.db.posts.delete_one({'_id': ObjectId(post_id)})
+            
+            if result.deleted_count > 0:
+                return jsonify({'message': 'Post deleted successfully'}), 200
+            else:
+                return jsonify({'error': 'Failed to delete post'}), 500
+        except Exception as e:
+            print(f"Error deleting post: {str(e)}")
+            return jsonify({'error': str(e)}), 500
+    
+    # Handle PUT (update)
+    elif request.method == 'PUT':
+        try:
+            data = request.get_json()
+            new_caption = data.get('caption', '')
+            
+            result = mongo.db.posts.update_one(
+                {'_id': ObjectId(post_id)},
+                {'$set': {'caption': new_caption}}
+            )
+            
+            if result.modified_count > 0:
+                return jsonify({'message': 'Post updated successfully'}), 200
+            else:
+                return jsonify({'message': 'No changes made'}), 200
+        except Exception as e:
+            print(f"Error updating post: {str(e)}")
+            return jsonify({'error': str(e)}), 500
+
+    """Update a post's caption"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'PUT, OPTIONS')
+        return response, 200
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({'error': 'No token provided'}), 401
+    
+    token = auth_header.split(' ')[1]
+    user_id = verify_token(token)
+    
+    if not user_id:
+        return jsonify({'error': 'Invalid token'}), 401
+    
+    try:
+        # Get the post
+        post = mongo.db.posts.find_one({'_id': ObjectId(post_id)})
+        
+        if not post:
+            return jsonify({'error': 'Post not found'}), 404
+        
+        # Check if user owns the post
+        if post['author_id'] != user_id:
+            return jsonify({'error': 'You can only edit your own posts'}), 403
+        
+        # Get new caption from request
+        data = request.get_json()
+        new_caption = data.get('caption', '')
+        
+        # Update the post
+        result = mongo.db.posts.update_one(
+            {'_id': ObjectId(post_id)},
+            {'$set': {'caption': new_caption}}
+        )
+        
+        if result.modified_count > 0:
+            return jsonify({'message': 'Post updated successfully'}), 200
+        else:
+            return jsonify({'message': 'No changes made'}), 200
+            
+    except Exception as e:
+        print(f"Error updating post: {str(e)}")
         return jsonify({'error': str(e)}), 500
