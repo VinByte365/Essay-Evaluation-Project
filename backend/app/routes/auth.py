@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, send_from_directory
+from flask import Blueprint, request, jsonify, send_from_directory, current_app
 from datetime import datetime, timedelta, timezone
 import jwt
 from app.models import User
@@ -8,22 +8,31 @@ from bson import ObjectId
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
+
 auth_bp = Blueprint('auth', __name__)
 user_model = User(mongo.db)
+
 
 # Secret key for JWT (should be in environment variables)
 SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'your-secret-key-change-this')
 
+
 # Avatar upload configuration
-UPLOAD_FOLDER = 'uploads/avatars'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
-# Create upload directory if it doesn't exist
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+def get_upload_folder():
+    """Get upload folder from app config or use default"""
+    try:
+        return current_app.config.get('UPLOAD_FOLDER', 'uploads/avatars')
+    except:
+        return 'uploads/avatars'
+
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 
 def generate_token(user_id):
     """Generate JWT token with UTC timezone"""
@@ -35,6 +44,7 @@ def generate_token(user_id):
     }
     token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
     return token
+
 
 def verify_token(token):
     """Verify JWT token"""
@@ -51,6 +61,7 @@ def verify_token(token):
     except Exception as e:
         print(f"❌ Token verification error: {e}")
         return None
+
 
 @auth_bp.route('/register', methods=['POST', 'OPTIONS'])
 def register():
@@ -88,6 +99,7 @@ def register():
         print(f"❌ Registration error: {e}")
         return jsonify({'error': str(e)}), 500
 
+
 @auth_bp.route('/login', methods=['POST', 'OPTIONS'])
 def login():
     if request.method == 'OPTIONS':
@@ -112,16 +124,19 @@ def login():
         
         token = generate_token(user['_id'])
         print(f"✅ User logged in: {email}, token generated")
+        print(f"🖼️ Avatar: {user.get('avatar')}")  # Debug log
         
         return jsonify({
             'message': 'Login successful',
             'token': token,
-            'user': user
+            'user': user  # This should include avatar
         }), 200
         
     except Exception as e:
         print(f"❌ Login error: {e}")
         return jsonify({'error': str(e)}), 500
+
+
 
 @auth_bp.route('/me', methods=['GET', 'OPTIONS'])
 def get_current_user():
@@ -150,6 +165,7 @@ def get_current_user():
         return jsonify({'error': 'User not found'}), 404
     
     return jsonify({'user': user}), 200
+
 
 @auth_bp.route('/upload-avatar', methods=['POST', 'OPTIONS'])
 def upload_avatar():
@@ -188,15 +204,20 @@ def upload_avatar():
         return jsonify({'error': 'File size exceeds 5MB limit'}), 400
     
     if file and allowed_file(file.filename):
+        UPLOAD_FOLDER = get_upload_folder()
+        
         # Delete old avatar if exists
         user = user_model.collection.find_one({'_id': ObjectId(user_id)})
         if user and user.get('avatar'):
-            old_avatar_path = user.get('avatar').lstrip('/')
+            # Extract filename from URL
+            old_filename = user.get('avatar').split('/')[-1]
+            old_avatar_path = os.path.join(UPLOAD_FOLDER, old_filename)
             if os.path.exists(old_avatar_path):
                 try:
                     os.remove(old_avatar_path)
+                    print(f"✅ Deleted old avatar: {old_filename}")
                 except Exception as e:
-                    print(f"Error deleting old avatar: {e}")
+                    print(f"❌ Error deleting old avatar: {e}")
         
         # Create unique filename
         timestamp = int(datetime.now(timezone.utc).timestamp())
@@ -206,8 +227,13 @@ def upload_avatar():
         
         # Save file
         file.save(filepath)
+        print(f"✅ Avatar saved: {filepath}")
+        print(f"📂 File exists: {os.path.exists(filepath)}")
+        print(f"📂 Absolute path: {os.path.abspath(filepath)}")
+
         
-        avatar_url = f"/uploads/avatars/{filename}"
+        # Return full URL
+        avatar_url = f"http://localhost:5000/uploads/avatars/{filename}"
         
         # Update user avatar in database
         mongo.db.users.update_one(
@@ -215,14 +241,11 @@ def upload_avatar():
             {'$set': {'avatar': avatar_url}}
         )
         
+        print(f"✅ Avatar URL saved to DB: {avatar_url}")
         return jsonify({'avatar_url': avatar_url}), 200
     
     return jsonify({'error': 'Invalid file type. Allowed: PNG, JPG, JPEG, GIF, WEBP'}), 400
 
-@auth_bp.route('/uploads/avatars/<filename>')
-def serve_avatar(filename):
-    """Serve uploaded avatar files"""
-    return send_from_directory(UPLOAD_FOLDER, filename)
 
 @auth_bp.route('/profile', methods=['PUT', 'OPTIONS'])
 def update_profile():
@@ -281,6 +304,7 @@ def update_profile():
         print(f"Error updating profile: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+
 @auth_bp.route('/change-password', methods=['POST', 'OPTIONS'])
 def change_password():
     """Change user password"""
@@ -325,6 +349,7 @@ def change_password():
     except Exception as e:
         print(f"Error changing password: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
 
 @auth_bp.route('/users/<user_id>/stats', methods=['GET', 'OPTIONS'])
 def get_user_stats(user_id):
@@ -376,3 +401,31 @@ def get_user_stats(user_id):
     except Exception as e:
         print(f"Error fetching user stats: {str(e)}")
         return jsonify({'error': str(e)}), 500
+    
+        if request.method == 'OPTIONS':
+            response = jsonify({'status': 'ok'})
+            response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+            response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+            response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+            return response, 200
+        
+        auth_header = request.headers.get('Authorization')
+        
+        if not auth_header or not auth_header.startswith('Bearer '):
+            print("❌ No token in Authorization header")
+            return jsonify({'error': 'No token provided'}), 401
+        
+        token = auth_header.split(' ')[1]
+        user_id = verify_token(token)
+        
+        if not user_id:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+        
+        user = user_model.get_by_id(user_id)
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        print(f"✅ Returning user data with avatar: {user.get('avatar')}")  # Debug log
+        return jsonify({'user': user}), 200
+

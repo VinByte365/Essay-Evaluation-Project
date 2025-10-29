@@ -11,7 +11,7 @@ essay_model = Essay(mongo.db)
 
 @posts_bp.route('/posts', methods=['GET', 'OPTIONS'])
 def get_posts():
-    """Get posts for feed (public + friends' posts)"""
+    """Get all posts (feed)"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
@@ -34,42 +34,43 @@ def get_posts():
         current_user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
         friends_list = current_user.get('friends', [])
         
-        # Fetch posts that are either:
-        # 1. Public posts
-        # 2. Friends-only posts from friends
-        # 3. User's own posts (any visibility)
+        # Get posts (public + friends-only from friends)
         posts = list(mongo.db.posts.find({
             '$or': [
-                {'visibility': 'public'},  # All public posts
-                {'author_id': user_id},  # User's own posts
-                {
-                    'visibility': 'friends',  # Friends-only posts
-                    'author_id': {'$in': friends_list}  # From friends
-                }
+                {'visibility': 'public'},
+                {'author_id': {'$in': friends_list}, 'visibility': 'friends'},
+                {'author_id': user_id}  # Include own posts
             ]
         }).sort('shared_at', -1))
         
-        # Format posts for response
-        formatted_posts = []
+        # Populate author details and essay info
+        result = []
         for post in posts:
-            formatted_post = {
-                'id': str(post['_id']),
-                'author_id': post['author_id'],
-                'author_name': post['author_name'],
-                'author_email': post['author_email'],
-                'essay_id': post['essay_id'],
-                'essay_title': post['essay_title'],
-                'essay_score': post.get('essay_score', 0),
-                'caption': post.get('caption', ''),
-                'visibility': post['visibility'],
-                'shared_at': post['shared_at'].isoformat(),
-                'likes': len(post.get('likes', [])),
-                'comments': post.get('comments', []),
-                'shares': post.get('shares', 0)
-            }
-            formatted_posts.append(formatted_post)
+            # Get author info including avatar
+            author = mongo.db.users.find_one({'_id': ObjectId(post['author_id'])})
+            
+            # Get essay info
+            essay = mongo.db.essays.find_one({'_id': ObjectId(post['essay_id'])})
+            
+            if author and essay:
+                result.append({
+                    'id': str(post['_id']),
+                    'author_id': post['author_id'],
+                    'author_name': author.get('name', 'Unknown'),
+                    'author_email': author.get('email', ''),
+                    'author_avatar': author.get('avatar'),  # ✅ Add this line
+                    'essay_id': post['essay_id'],
+                    'essay_title': essay.get('title', 'Untitled'),
+                    'essay_score': essay.get('score', 0),
+                    'caption': post.get('caption', ''),
+                    'shared_at': post.get('shared_at'),
+                    'visibility': post.get('visibility', 'public'),
+                    'likes': post.get('likes', 0),
+                    'comments': len(post.get('comments', [])),
+                    'shares': post.get('shares', 0)
+                })
         
-        return jsonify({'posts': formatted_posts}), 200
+        return jsonify({'posts': result}), 200
         
     except Exception as e:
         print(f"Error fetching posts: {str(e)}")
@@ -276,7 +277,6 @@ def get_comments(post_id):
         return jsonify({'error': 'Invalid token'}), 401
     
     try:
-        # ✅ Get post and return comments array
         post = mongo.db.posts.find_one({'_id': ObjectId(post_id)})
         
         if not post:
@@ -284,12 +284,27 @@ def get_comments(post_id):
         
         comments = post.get('comments', [])
         
-        return jsonify({'comments': comments}), 200
+        # Populate user details for each comment including avatar
+        populated_comments = []
+        for comment in comments:
+            user = mongo.db.users.find_one({'_id': ObjectId(comment['user_id'])})
+            if user:
+                populated_comments.append({
+                    'user_id': comment['user_id'],
+                    'user_name': user.get('name', 'Unknown'),
+                    'user_avatar': user.get('avatar'),
+                    'text': comment['text'],
+                    'created_at': comment['created_at']
+                })
+        
+        return jsonify({'comments': populated_comments}), 200
         
     except Exception as e:
         print(f"Error fetching comments: {str(e)}")
         return jsonify({'error': str(e)}), 500
-    
+
+@posts_bp.route('/posts/my-posts', methods=['GET', 'OPTIONS'])
+def get_my_posts():
     """Get current user's posts"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
@@ -341,8 +356,7 @@ def get_comments(post_id):
         print(f"Error fetching user posts: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@posts_bp.route('/posts/my-posts', methods=['GET', 'OPTIONS'])
-def get_my_posts():
+
     """Get current user's posts"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})

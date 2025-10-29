@@ -18,7 +18,6 @@ class User:
             'email': email,
             'password_hash': generate_password_hash(password),
             'created_at': datetime.now(timezone.utc),
-            'profile_picture': None,
             'friends': [],
         }
         
@@ -35,9 +34,11 @@ class User:
             user['_id'] = str(user['_id'])
             user['id'] = user['_id']
             del user['password_hash']
+            # Avatar should be included automatically if it exists
             return user
         
         return None
+
     
     def get_by_id(self, user_id):
         """Get user by ID"""
@@ -125,21 +126,24 @@ class User:
             
             sender = self.get_by_id(sender_id)
             if sender:
+                print(f"👤 Sender info: name={sender.get('name')}, avatar={sender.get('avatar')}")  # Debug log
                 result.append({
                     '_id': str(req['_id']),
                     'from_user_id': sender_id,
                     'sender': {
                         'id': sender['id'],
                         'name': sender.get('name', 'Unknown'),
-                        'email': sender.get('email', '')
+                        'email': sender.get('email', ''),
+                        'avatar': sender.get('avatar')  # ✅ Make sure this is included
                     },
                     'created_at': req.get('created_at'),
                     'status': req.get('status')
                 })
-                print(f"✅ Added request from {sender.get('name')}")
+                print(f"✅ Added request from {sender.get('name')} with avatar: {sender.get('avatar')}")
         
         print(f"✅ Returning {len(result)} requests")
         return result
+
     
     def accept_friend_request(self, request_id, user_id):
         """Accept a friend request"""
