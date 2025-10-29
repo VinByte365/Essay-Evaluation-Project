@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from werkzeug.security import generate_password_hash, check_password_hash
 from bson import ObjectId
 
@@ -6,7 +6,7 @@ from bson import ObjectId
 class User:
     def __init__(self, db):
         self.collection = db['users']
-        self.friend_requests = db['friend_requests']  # NEW: Separate collection
+        self.friend_requests = db['friend_requests']
     
     def create(self, name, email, password):
         """Create a new user"""
@@ -17,9 +17,9 @@ class User:
             'name': name,
             'email': email,
             'password_hash': generate_password_hash(password),
-            'created_at': datetime.now(),
+            'created_at': datetime.now(timezone.utc),
             'profile_picture': None,
-            'friends': [],  # Array of friend user IDs (accepted friends only)
+            'friends': [],
         }
         
         result = self.collection.insert_one(user)
@@ -63,12 +63,13 @@ class User:
     
     def send_friend_request(self, from_user_id, to_user_id):
         """Send a friend request"""
-        # Check if already friends
+        print(f"🔵 send_friend_request: from={from_user_id}, to={to_user_id}")
+        
         from_user = self.collection.find_one({'_id': ObjectId(from_user_id)})
         if to_user_id in from_user.get('friends', []):
+            print(f"⚠️ Already friends")
             return {'error': 'Already friends'}
         
-        # Check if request already exists
         existing = self.friend_requests.find_one({
             '$or': [
                 {'from_user_id': from_user_id, 'to_user_id': to_user_id},
@@ -77,46 +78,98 @@ class User:
         })
         
         if existing:
+            print(f"📋 Found existing request: {existing}")
             if existing['status'] == 'pending':
-                # If the other user already sent a request, auto-accept it
                 if existing['from_user_id'] == to_user_id:
-                    self.accept_friend_request(existing['_id'], from_user_id)
+                    print(f"✅ Auto-accepting mutual request")
+                    self.accept_friend_request(str(existing['_id']), from_user_id)
                     return {'message': 'Friend request auto-accepted'}
+                print(f"⚠️ Request already sent")
                 return {'error': 'Friend request already sent'}
             elif existing['status'] == 'accepted':
+                print(f"⚠️ Already friends (accepted)")
                 return {'error': 'Already friends'}
         
-        # Create new friend request
         request = {
             'from_user_id': from_user_id,
             'to_user_id': to_user_id,
             'status': 'pending',
-            'created_at': datetime.now()
+            'created_at': datetime.now(timezone.utc)
         }
         
+        print(f"✅ Creating request: {request}")
         result = self.friend_requests.insert_one(request)
+        print(f"✅ Request created with ID: {result.inserted_id}")
         return {'message': 'Friend request sent', 'request_id': str(result.inserted_id)}
+    
+    def get_pending_requests(self, user_id):
+        """Get pending friend requests for user (where they are the receiver)"""
+        print(f"🔍 get_pending_requests for user: {user_id}")
+        
+        # ✅ FIXED: Use to_user_id instead of receiver_id
+        requests = list(self.friend_requests.find({
+            'to_user_id': user_id,
+            'status': 'pending'
+        }).sort('created_at', -1))
+        
+        print(f"📊 Found {len(requests)} pending requests")
+        
+        # Populate sender details
+        result = []
+        for req in requests:
+            # ✅ FIXED: Use from_user_id instead of sender_id
+            sender_id = req.get('from_user_id')
+            if not sender_id:
+                print(f"⚠️ Request missing from_user_id: {req}")
+                continue
+            
+            sender = self.get_by_id(sender_id)
+            if sender:
+                result.append({
+                    '_id': str(req['_id']),
+                    'from_user_id': sender_id,
+                    'sender': {
+                        'id': sender['id'],
+                        'name': sender.get('name', 'Unknown'),
+                        'email': sender.get('email', '')
+                    },
+                    'created_at': req.get('created_at'),
+                    'status': req.get('status')
+                })
+                print(f"✅ Added request from {sender.get('name')}")
+        
+        print(f"✅ Returning {len(result)} requests")
+        return result
     
     def accept_friend_request(self, request_id, user_id):
         """Accept a friend request"""
+        print(f"✅ accept_friend_request: request_id={request_id}, user_id={user_id}")
+        
         request = self.friend_requests.find_one({'_id': ObjectId(request_id)})
         
         if not request:
+            print(f"❌ Request not found")
             return {'error': 'Request not found'}
         
-        if request['to_user_id'] != user_id:
+        # ✅ FIXED: Use to_user_id instead of receiver_id
+        if request.get('to_user_id') != user_id:
+            print(f"❌ Unauthorized: to_user_id={request.get('to_user_id')}, user_id={user_id}")
             return {'error': 'Unauthorized'}
         
         if request['status'] != 'pending':
+            print(f"❌ Request already processed")
             return {'error': 'Request already processed'}
         
         # Update request status
         self.friend_requests.update_one(
             {'_id': ObjectId(request_id)},
-            {'$set': {'status': 'accepted', 'accepted_at': datetime.now()}}
+            {'$set': {
+                'status': 'accepted', 
+                'accepted_at': datetime.now(timezone.utc)
+            }}
         )
         
-        # Add each other as friends
+        # ✅ FIXED: Use from_user_id and to_user_id instead of sender_id/receiver_id
         self.collection.update_one(
             {'_id': ObjectId(request['from_user_id'])},
             {'$addToSet': {'friends': request['to_user_id']}}
@@ -126,47 +179,41 @@ class User:
             {'$addToSet': {'friends': request['from_user_id']}}
         )
         
+        print(f"✅ Friend request accepted")
         return {'message': 'Friend request accepted'}
     
     def reject_friend_request(self, request_id, user_id):
         """Reject a friend request"""
+        print(f"❌ reject_friend_request: request_id={request_id}, user_id={user_id}")
+        
         request = self.friend_requests.find_one({'_id': ObjectId(request_id)})
         
         if not request:
+            print(f"❌ Request not found")
             return {'error': 'Request not found'}
         
-        if request['to_user_id'] != user_id:
+        # ✅ FIXED: Use to_user_id instead of receiver_id
+        if request.get('to_user_id') != user_id:
+            print(f"❌ Unauthorized")
             return {'error': 'Unauthorized'}
         
-        # Update status or delete
         self.friend_requests.update_one(
             {'_id': ObjectId(request_id)},
-            {'$set': {'status': 'rejected', 'rejected_at': datetime.now()}}
+            {'$set': {
+                'status': 'rejected', 
+                'rejected_at': datetime.now(timezone.utc)
+            }}
         )
         
+        print(f"✅ Friend request rejected")
         return {'message': 'Friend request rejected'}
-    
-    def get_pending_requests(self, user_id):
-        """Get pending friend requests for user"""
-        requests = list(self.friend_requests.find({
-            'to_user_id': user_id,
-            'status': 'pending'
-        }).sort('created_at', -1))
-        
-        # Populate sender details
-        for req in requests:
-            req['_id'] = str(req['_id'])
-            sender = self.get_by_id(req['from_user_id'])
-            req['sender'] = sender
-        
-        return requests
     
     def get_friend_suggestions(self, user_id, limit=10):
         """Get friend suggestions (users not yet friends)"""
         user = self.collection.find_one({'_id': ObjectId(user_id)})
         friend_ids = user.get('friends', [])
         
-        # Get pending requests to exclude
+        # ✅ FIXED: Use from_user_id and to_user_id
         pending_requests = list(self.friend_requests.find({
             '$or': [
                 {'from_user_id': user_id, 'status': 'pending'},
@@ -176,12 +223,14 @@ class User:
         
         excluded_ids = friend_ids + [user_id]
         for req in pending_requests:
-            excluded_ids.append(req['from_user_id'])
-            excluded_ids.append(req['to_user_id'])
+            # ✅ FIXED: Use from_user_id and to_user_id
+            if req.get('from_user_id'):
+                excluded_ids.append(req['from_user_id'])
+            if req.get('to_user_id'):
+                excluded_ids.append(req['to_user_id'])
         
-        # Find users not in excluded list
         suggestions = list(self.collection.find({
-            '_id': {'$nin': [ObjectId(uid) for uid in excluded_ids if ObjectId.is_valid(uid)]}
+            '_id': {'$nin': [ObjectId(uid) for uid in excluded_ids if uid and ObjectId.is_valid(uid)]}
         }).limit(limit))
         
         for user in suggestions:
@@ -208,3 +257,4 @@ class User:
                 del user['password_hash']
         
         return users
+    

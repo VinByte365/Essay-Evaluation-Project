@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, send_from_directory
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import jwt
 from app.models import User
 from app import mongo
@@ -26,11 +26,12 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def generate_token(user_id):
-    """Generate JWT token"""
+    """Generate JWT token with UTC timezone"""
+    now = datetime.now(timezone.utc)
     payload = {
         'user_id': user_id,
-        'exp': datetime.now() + timedelta(days=7),
-        'iat': datetime.now()
+        'exp': now + timedelta(days=7),
+        'iat': now
     }
     token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
     return token
@@ -39,10 +40,16 @@ def verify_token(token):
     """Verify JWT token"""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        print(f"✅ Token verified for user: {payload['user_id']}")
         return payload['user_id']
     except jwt.ExpiredSignatureError:
+        print("❌ Token expired")
         return None
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as e:
+        print(f"❌ Invalid token: {e}")
+        return None
+    except Exception as e:
+        print(f"❌ Token verification error: {e}")
         return None
 
 @auth_bp.route('/register', methods=['POST', 'OPTIONS'])
@@ -69,6 +76,7 @@ def register():
             return jsonify({'error': 'User with this email already exists'}), 409
         
         token = generate_token(user['_id'])
+        print(f"✅ New user registered: {email}, token generated")
         
         return jsonify({
             'message': 'Registration successful',
@@ -77,6 +85,7 @@ def register():
         }), 201
         
     except Exception as e:
+        print(f"❌ Registration error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @auth_bp.route('/login', methods=['POST', 'OPTIONS'])
@@ -102,6 +111,7 @@ def login():
             return jsonify({'error': 'Invalid email or password'}), 401
         
         token = generate_token(user['_id'])
+        print(f"✅ User logged in: {email}, token generated")
         
         return jsonify({
             'message': 'Login successful',
@@ -110,6 +120,7 @@ def login():
         }), 200
         
     except Exception as e:
+        print(f"❌ Login error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @auth_bp.route('/me', methods=['GET', 'OPTIONS'])
@@ -124,6 +135,7 @@ def get_current_user():
     auth_header = request.headers.get('Authorization')
     
     if not auth_header or not auth_header.startswith('Bearer '):
+        print("❌ No token in Authorization header")
         return jsonify({'error': 'No token provided'}), 401
     
     token = auth_header.split(' ')[1]
@@ -187,7 +199,7 @@ def upload_avatar():
                     print(f"Error deleting old avatar: {e}")
         
         # Create unique filename
-        timestamp = int(datetime.now().timestamp())
+        timestamp = int(datetime.now(timezone.utc).timestamp())
         file_extension = file.filename.rsplit('.', 1)[1].lower()
         filename = secure_filename(f"{user_id}_{timestamp}.{file_extension}")
         filepath = os.path.join(UPLOAD_FOLDER, filename)
