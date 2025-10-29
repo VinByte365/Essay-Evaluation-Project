@@ -12,7 +12,7 @@ class Essay:
             'title': title,
             'content': content,
             'file_name': file_name,
-            'upload_date': datetime.utcnow(),
+            'upload_date': datetime.now(),
             'status': 'evaluating',
             'score': None,
             'feedback': None,
@@ -42,7 +42,7 @@ class Essay:
                 'score': evaluation_results.get('ai_detection_score'),
             },
             'error_feedback': evaluation_results.get('error_feedback', []),
-            'evaluated_at': datetime.utcnow(),
+            'evaluated_at': datetime.now(),
         }
         
         self.collection.update_one(

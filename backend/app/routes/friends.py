@@ -29,18 +29,55 @@ def send_friend_request():
         return jsonify({'error': 'Invalid token'}), 401
     
     data = request.get_json()
-    # ✅ UPDATED: Support both 'to_user_id' and 'receiver_id'
-    to_user_id = data.get('to_user_id') or data.get('receiver_id')
+    receiver_id = data.get('receiver_id')
     
-    if not to_user_id:
-        return jsonify({'error': 'Target user ID required'}), 400
+    if not receiver_id:
+        return jsonify({'error': 'Receiver ID required'}), 400
     
-    result = user_model.send_friend_request(user_id, to_user_id)
+    if user_id == receiver_id:
+        return jsonify({'error': 'Cannot send friend request to yourself'}), 400
     
-    if 'error' in result:
-        return jsonify(result), 400
-    
-    return jsonify(result), 200
+    try:
+        # Check if users are already friends
+        sender = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+        if receiver_id in sender.get('friends', []):
+            return jsonify({'error': 'Already friends'}), 400
+        
+        # Check if request already exists (pending or rejected)
+        existing_request = mongo.db.friend_requests.find_one({
+            'sender_id': user_id,
+            'receiver_id': receiver_id,
+            'status': 'pending'
+        })
+        
+        if existing_request:
+            return jsonify({'error': 'Friend request already sent'}), 400
+        
+        # ✅ Delete any old rejected/cancelled requests
+        mongo.db.friend_requests.delete_many({
+            '$or': [
+                {'sender_id': user_id, 'receiver_id': receiver_id},
+                {'sender_id': receiver_id, 'receiver_id': user_id}
+            ],
+            'status': {'$in': ['rejected', 'cancelled']}
+        })
+        
+        # Create new friend request
+        friend_request = {
+            'sender_id': user_id,
+            'receiver_id': receiver_id,
+            'status': 'pending',
+            'created_at': datetime.now()
+        }
+        
+        mongo.db.friend_requests.insert_one(friend_request)
+        
+        return jsonify({'message': 'Friend request sent successfully'}), 200
+        
+    except Exception as e:
+        print(f"Error sending friend request: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 
 
 # ✅ NEW ROUTE: Check friendship status
@@ -266,6 +303,17 @@ def remove_friend(friend_id):
         mongo.db.users.update_one(
             {'_id': ObjectId(friend_id)},
             {'$pull': {'friends': user_id}}
+        )
+        
+        # ✅ Mark any existing friend requests as cancelled
+        mongo.db.friend_requests.update_many(
+            {
+                '$or': [
+                    {'sender_id': user_id, 'receiver_id': friend_id},
+                    {'sender_id': friend_id, 'receiver_id': user_id}
+                ]
+            },
+            {'$set': {'status': 'cancelled'}}
         )
         
         return jsonify({'message': 'Friend removed'}), 200

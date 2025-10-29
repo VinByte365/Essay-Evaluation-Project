@@ -1,7 +1,7 @@
 from flask import Flask
 from flask_cors import CORS
 from .config import Config
-from .extensions import mongo, init_nlp, init_detector
+from .extensions import mongo, init_nlp
 
 def create_app(config_class=Config):
     app = Flask(__name__)
@@ -10,17 +10,16 @@ def create_app(config_class=Config):
  
     mongo.init_app(app)
     CORS(app, resources={
-    r"/api/*": {
-        "origins": ["http://localhost:3000", "http://127.0.0.1:3000"],
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True
-    }
-})
+        r"/api/*": {
+            "origins": ["http://localhost:3000", "http://127.0.0.1:3000"],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"],
+            "supports_credentials": True
+        }
+    })
 
     with app.app_context():
         init_nlp()
-        init_detector()
 
     from .routes.api import api_bp
     app.register_blueprint(api_bp, url_prefix='/api')
@@ -36,4 +35,5 @@ def create_app(config_class=Config):
 
     from app.routes.search import search_bp
     app.register_blueprint(search_bp, url_prefix='/api')
+    
     return app

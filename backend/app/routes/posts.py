@@ -122,7 +122,7 @@ def create_post():
             'essay_score': essay.get('score', 0),
             'caption': caption,
             'visibility': visibility,
-            'shared_at': datetime.utcnow(),
+            'shared_at': datetime.now(),
             'likes': [],  # ✅ Array of user IDs
             'comments': [],  # ✅ Array of comment objects
             'shares': 0  # Number
@@ -141,7 +141,7 @@ def create_post():
 
 @posts_bp.route('/posts/<post_id>/like', methods=['POST', 'OPTIONS'])
 def like_post(post_id):
-    """Like a post"""
+    """Toggle like on a post (like/unlike)"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
@@ -160,19 +160,67 @@ def like_post(post_id):
         return jsonify({'error': 'Invalid token'}), 401
     
     try:
-        # ✅ UPDATED: Add user_id to likes array (prevents duplicates)
-        result = mongo.db.posts.update_one(
-            {'_id': ObjectId(post_id)},
-            {'$addToSet': {'likes': user_id}}  # $addToSet prevents duplicates
-        )
+        # Get the post to check if user has already liked
+        post = mongo.db.posts.find_one({'_id': ObjectId(post_id)})
         
-        if result.modified_count > 0:
-            return jsonify({'message': 'Post liked'}), 200
+        if not post:
+            return jsonify({'error': 'Post not found'}), 404
+        
+        likes = post.get('likes', [])
+        
+        # Toggle like: if user already liked, remove; otherwise add
+        if user_id in likes:
+            # Unlike
+            result = mongo.db.posts.update_one(
+                {'_id': ObjectId(post_id)},
+                {'$pull': {'likes': user_id}}
+            )
+            return jsonify({'message': 'Post unliked', 'liked': False}), 200
         else:
-            return jsonify({'message': 'Already liked or post not found'}), 200
+            # Like
+            result = mongo.db.posts.update_one(
+                {'_id': ObjectId(post_id)},
+                {'$addToSet': {'likes': user_id}}
+            )
+            return jsonify({'message': 'Post liked', 'liked': True}), 200
             
     except Exception as e:
-        print(f"Error liking post: {str(e)}")
+        print(f"Error toggling like: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@posts_bp.route('/posts/<post_id>/check-like', methods=['GET', 'OPTIONS'])
+def check_like_status(post_id):
+    """Check if current user has liked a post"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+        response.headers.add('Access-Control-Allow-Headers', 'Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        return response, 200
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({'error': 'No token provided'}), 401
+    
+    token = auth_header.split(' ')[1]
+    user_id = verify_token(token)
+    
+    if not user_id:
+        return jsonify({'error': 'Invalid token'}), 401
+    
+    try:
+        post = mongo.db.posts.find_one({'_id': ObjectId(post_id)})
+        
+        if not post:
+            return jsonify({'error': 'Post not found'}), 404
+        
+        likes = post.get('likes', [])
+        liked = user_id in likes
+        
+        return jsonify({'liked': liked}), 200
+        
+    except Exception as e:
+        print(f"Error checking like status: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @posts_bp.route('/posts/<post_id>/comment', methods=['POST', 'OPTIONS'])

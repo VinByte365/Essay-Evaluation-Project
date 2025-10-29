@@ -17,7 +17,7 @@ class Post:
             'essay_score': essay_score,
             'caption': caption,
             'visibility': visibility,
-            'shared_at': datetime.utcnow(),
+            'shared_at': datetime.now(),
             'likes': 0,
             'comments': [],
             'shares': 0,
@@ -84,7 +84,7 @@ class Post:
             'user_id': user_id,
             'user_name': user_name,
             'text': comment_text,
-            'created_at': datetime.utcnow()
+            'created_at': datetime.now()
         }
         
         self.collection.update_one(

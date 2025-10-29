@@ -17,7 +17,7 @@ class User:
             'name': name,
             'email': email,
             'password_hash': generate_password_hash(password),
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(),
             'profile_picture': None,
             'friends': [],  # Array of friend user IDs (accepted friends only)
         }
@@ -91,7 +91,7 @@ class User:
             'from_user_id': from_user_id,
             'to_user_id': to_user_id,
             'status': 'pending',
-            'created_at': datetime.utcnow()
+            'created_at': datetime.now()
         }
         
         result = self.friend_requests.insert_one(request)
@@ -113,7 +113,7 @@ class User:
         # Update request status
         self.friend_requests.update_one(
             {'_id': ObjectId(request_id)},
-            {'$set': {'status': 'accepted', 'accepted_at': datetime.utcnow()}}
+            {'$set': {'status': 'accepted', 'accepted_at': datetime.now()}}
         )
         
         # Add each other as friends
@@ -141,7 +141,7 @@ class User:
         # Update status or delete
         self.friend_requests.update_one(
             {'_id': ObjectId(request_id)},
-            {'$set': {'status': 'rejected', 'rejected_at': datetime.utcnow()}}
+            {'$set': {'status': 'rejected', 'rejected_at': datetime.now()}}
         )
         
         return {'message': 'Friend request rejected'}
