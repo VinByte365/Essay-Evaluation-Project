@@ -5,9 +5,11 @@ from app import mongo
 from bson import ObjectId
 from datetime import datetime
 
+
 posts_bp = Blueprint('posts', __name__)
 post_model = Post(mongo.db)
 essay_model = Essay(mongo.db)
+
 
 @posts_bp.route('/posts', methods=['GET', 'OPTIONS'])
 def get_posts():
@@ -53,13 +55,17 @@ def get_posts():
             essay = mongo.db.essays.find_one({'_id': ObjectId(post['essay_id'])})
             
             if author and essay:
-                # ✅ FIX: Convert likes array to count
+                # Convert likes array to count
                 likes = post.get('likes', [])
                 likes_count = len(likes) if isinstance(likes, list) else likes
                 
-                # ✅ FIX: Convert comments array to count
+                # Convert comments array to count
                 comments = post.get('comments', [])
                 comments_count = len(comments) if isinstance(comments, list) else comments
+                
+                # ✅ NEW: Get essay content preview (first 300 characters)
+                essay_content = essay.get('content', '')
+                content_preview = essay_content[:300] if essay_content else None
                 
                 result.append({
                     'id': str(post['_id']),
@@ -70,11 +76,12 @@ def get_posts():
                     'essay_id': post['essay_id'],
                     'essay_title': essay.get('title', 'Untitled'),
                     'essay_score': essay.get('score', 0),
+                    'essay_content': content_preview,  # ✅ Add content preview
                     'caption': post.get('caption', ''),
-                    'shared_at': post.get('shared_at'),
+                    'shared_at': post.get('shared_at').isoformat() if hasattr(post.get('shared_at'), 'isoformat') else str(post.get('shared_at')),
                     'visibility': post.get('visibility', 'public'),
-                    'likes': likes_count,  # ✅ Now returns a number
-                    'comments': comments_count,  # ✅ Now returns a number
+                    'likes': likes_count,
+                    'comments': comments_count,
                     'shares': post.get('shares', 0)
                 })
         
@@ -124,7 +131,7 @@ def create_post():
         # Get user details
         user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
         
-        # ✅ UPDATED: Create post with arrays
+        # Create post with arrays
         post = {
             'author_id': user_id,
             'author_name': user.get('name', 'Unknown'),
@@ -135,8 +142,8 @@ def create_post():
             'caption': caption,
             'visibility': visibility,
             'shared_at': datetime.now(),
-            'likes': [],  # ✅ Array of user IDs
-            'comments': [],  # ✅ Array of comment objects
+            'likes': [],  # Array of user IDs
+            'comments': [],  # Array of comment objects
             'shares': 0  # Number
         }
         
@@ -150,6 +157,7 @@ def create_post():
     except Exception as e:
         print(f"Error creating post: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
 
 @posts_bp.route('/posts/<post_id>/like', methods=['POST', 'OPTIONS'])
 def like_post(post_id):
@@ -200,6 +208,7 @@ def like_post(post_id):
         print(f"Error toggling like: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+
 @posts_bp.route('/posts/<post_id>/check-like', methods=['GET', 'OPTIONS'])
 def check_like_status(post_id):
     """Check if current user has liked a post"""
@@ -235,6 +244,7 @@ def check_like_status(post_id):
         print(f"Error checking like status: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+
 @posts_bp.route('/posts/<post_id>/comment', methods=['POST', 'OPTIONS'])
 def comment_post(post_id):
     if request.method == 'OPTIONS':
@@ -266,6 +276,7 @@ def comment_post(post_id):
         return jsonify({'message': 'Comment added'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
 
 @posts_bp.route('/posts/<post_id>/comments', methods=['GET', 'OPTIONS'])
 def get_comments(post_id):
@@ -314,60 +325,9 @@ def get_comments(post_id):
         print(f"Error fetching comments: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+
 @posts_bp.route('/posts/my-posts', methods=['GET', 'OPTIONS'])
 def get_my_posts():
-    """Get current user's posts"""
-    if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
-        return response, 200
-    
-    auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
-        return jsonify({'error': 'No token provided'}), 401
-    
-    token = auth_header.split(' ')[1]
-    user_id = verify_token(token)
-    
-    if not user_id:
-        return jsonify({'error': 'Invalid token'}), 401
-    
-    try:
-        # Get user's posts
-        posts = list(mongo.db.posts.find({'author_id': user_id}).sort('shared_at', -1))
-        
-        # Format posts
-        formatted_posts = []
-        for post in posts:
-            # Handle likes
-            likes = post.get('likes', [])
-            likes_count = len(likes) if isinstance(likes, list) else likes
-            
-            # Handle comments
-            comments = post.get('comments', [])
-            comment_count = len(comments) if isinstance(comments, list) else comments
-            
-            formatted_posts.append({
-                'id': str(post['_id']),
-                'essay_id': post.get('essay_id'),
-                'essay_title': post.get('essay_title'),
-                'caption': post.get('caption'),
-                'visibility': post.get('visibility'),
-                'shared_at': post.get('shared_at').isoformat() if hasattr(post.get('shared_at'), 'isoformat') else str(post.get('shared_at')),
-                'likes': likes_count,
-                'comments': comment_count,
-                'shares': post.get('shares', 0)
-            })
-        
-        return jsonify({'posts': formatted_posts}), 200
-        
-    except Exception as e:
-        print(f"Error fetching user posts: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-
     """Get current user's posts"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
