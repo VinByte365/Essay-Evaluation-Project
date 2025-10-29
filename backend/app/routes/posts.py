@@ -53,20 +53,28 @@ def get_posts():
             essay = mongo.db.essays.find_one({'_id': ObjectId(post['essay_id'])})
             
             if author and essay:
+                # ✅ FIX: Convert likes array to count
+                likes = post.get('likes', [])
+                likes_count = len(likes) if isinstance(likes, list) else likes
+                
+                # ✅ FIX: Convert comments array to count
+                comments = post.get('comments', [])
+                comments_count = len(comments) if isinstance(comments, list) else comments
+                
                 result.append({
                     'id': str(post['_id']),
                     'author_id': post['author_id'],
                     'author_name': author.get('name', 'Unknown'),
                     'author_email': author.get('email', ''),
-                    'author_avatar': author.get('avatar'),  # ✅ Add this line
+                    'author_avatar': author.get('avatar'),
                     'essay_id': post['essay_id'],
                     'essay_title': essay.get('title', 'Untitled'),
                     'essay_score': essay.get('score', 0),
                     'caption': post.get('caption', ''),
                     'shared_at': post.get('shared_at'),
                     'visibility': post.get('visibility', 'public'),
-                    'likes': post.get('likes', 0),
-                    'comments': len(post.get('comments', [])),
+                    'likes': likes_count,  # ✅ Now returns a number
+                    'comments': comments_count,  # ✅ Now returns a number
                     'shares': post.get('shares', 0)
                 })
         
@@ -74,7 +82,10 @@ def get_posts():
         
     except Exception as e:
         print(f"Error fetching posts: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
 
 @posts_bp.route('/posts', methods=['POST', 'OPTIONS'])
 def create_post():
