@@ -99,7 +99,6 @@ def register():
         print(f"❌ Registration error: {e}")
         return jsonify({'error': str(e)}), 500
 
-
 @auth_bp.route('/login', methods=['POST', 'OPTIONS'])
 def login():
     if request.method == 'OPTIONS':
@@ -136,8 +135,6 @@ def login():
         print(f"❌ Login error: {e}")
         return jsonify({'error': str(e)}), 500
 
-
-
 @auth_bp.route('/me', methods=['GET', 'OPTIONS'])
 def get_current_user():
     if request.method == 'OPTIONS':
@@ -165,7 +162,6 @@ def get_current_user():
         return jsonify({'error': 'User not found'}), 404
     
     return jsonify({'user': user}), 200
-
 
 @auth_bp.route('/upload-avatar', methods=['POST', 'OPTIONS'])
 def upload_avatar():
@@ -229,23 +225,14 @@ def upload_avatar():
         file.save(filepath)
         print(f"✅ Avatar saved: {filepath}")
         print(f"📂 File exists: {os.path.exists(filepath)}")
-        print(f"📂 Absolute path: {os.path.abspath(filepath)}")
-
         
-        # Return full URL
+        # Return full URL (but DON'T update database yet - let update_profile do it)
         avatar_url = f"http://localhost:5000/uploads/avatars/{filename}"
         
-        # Update user avatar in database
-        mongo.db.users.update_one(
-            {'_id': ObjectId(user_id)},
-            {'$set': {'avatar': avatar_url}}
-        )
-        
-        print(f"✅ Avatar URL saved to DB: {avatar_url}")
+        print(f"✅ Avatar URL generated: {avatar_url}")
         return jsonify({'avatar_url': avatar_url}), 200
     
     return jsonify({'error': 'Invalid file type. Allowed: PNG, JPG, JPEG, GIF, WEBP'}), 400
-
 
 @auth_bp.route('/profile', methods=['PUT', 'OPTIONS'])
 def update_profile():
@@ -269,6 +256,7 @@ def update_profile():
     
     try:
         data = request.get_json()
+        print(f"📥 Received update data: {data}")  # Debug
         
         update_data = {}
         if 'name' in data:
@@ -285,8 +273,11 @@ def update_profile():
             update_data['location'] = data['location']
         if 'bio' in data:
             update_data['bio'] = data['bio']
-        if 'avatar' in data:
+        if 'avatar' in data and data['avatar']:  # ✅ Ensure avatar is not empty
             update_data['avatar'] = data['avatar']
+            print(f"✅ Updating avatar to: {data['avatar']}")  # Debug
+        
+        print(f"💾 Updating database with: {update_data}")  # Debug
         
         user_model.collection.update_one(
             {'_id': ObjectId(user_id)},
@@ -294,6 +285,7 @@ def update_profile():
         )
         
         user = user_model.get_by_id(user_id)
+        print(f"✅ Updated user avatar: {user.get('avatar')}")  # Debug
         
         return jsonify({
             'message': 'Profile updated successfully',
@@ -303,7 +295,6 @@ def update_profile():
     except Exception as e:
         print(f"Error updating profile: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
 
 @auth_bp.route('/change-password', methods=['POST', 'OPTIONS'])
 def change_password():
@@ -349,7 +340,6 @@ def change_password():
     except Exception as e:
         print(f"Error changing password: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
 
 @auth_bp.route('/users/<user_id>/stats', methods=['GET', 'OPTIONS'])
 def get_user_stats(user_id):
