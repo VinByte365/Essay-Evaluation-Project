@@ -54,8 +54,6 @@ def send_friend_request():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-
-@friends_bp.route('/friends/status/<user_id>', methods=['GET', 'OPTIONS'])
 @friends_bp.route('/friends/status/<user_id>', methods=['GET', 'OPTIONS'])
 def check_friendship_status(user_id):
     """Check friendship status with a user"""
@@ -115,8 +113,6 @@ def check_friendship_status(user_id):
         print(f"❌ Error checking friendship status: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-
-
 @friends_bp.route('/friends/requests/pending', methods=['GET', 'OPTIONS'])
 def get_pending_requests():
     """Get pending friend requests"""
@@ -141,7 +137,6 @@ def get_pending_requests():
     requests = user_model.get_pending_requests(user_id)
     print(f"📊 Returning {len(requests)} requests")
     return jsonify({'requests': requests}), 200
-
 
 @friends_bp.route('/friends/request/<request_id>/accept', methods=['POST', 'OPTIONS'])
 def accept_request(request_id):
@@ -170,7 +165,6 @@ def accept_request(request_id):
     
     return jsonify(result), 200
 
-
 @friends_bp.route('/friends/request/<request_id>/reject', methods=['POST', 'OPTIONS'])
 def reject_request(request_id):
     """Reject friend request"""
@@ -197,7 +191,6 @@ def reject_request(request_id):
         return jsonify(result), 400
     
     return jsonify(result), 200
-
 
 @friends_bp.route('/friends/request/cancel/<receiver_id>', methods=['POST', 'OPTIONS'])
 def cancel_friend_request(receiver_id):
@@ -240,7 +233,6 @@ def cancel_friend_request(receiver_id):
         print(f"❌ Error cancelling friend request: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-
 @friends_bp.route('/friends/suggestions', methods=['GET', 'OPTIONS'])
 def get_suggestions():
     """Get friend suggestions"""
@@ -263,7 +255,6 @@ def get_suggestions():
     
     suggestions = user_model.get_friend_suggestions(user_id)
     return jsonify({'suggestions': suggestions}), 200
-
 
 @friends_bp.route('/friends', methods=['GET', 'OPTIONS'])
 def get_friends():
@@ -308,7 +299,6 @@ def get_friends():
     except Exception as e:
         print(f"Error fetching friends: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
 
 @friends_bp.route('/friends/<friend_id>', methods=['DELETE', 'OPTIONS'])
 def remove_friend(friend_id):

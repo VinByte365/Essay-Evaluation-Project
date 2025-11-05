@@ -33,7 +33,6 @@ def get_upload_folder():
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-
 def generate_token(user_id):
     """Generate JWT token with UTC timezone"""
     now = datetime.now(timezone.utc)
@@ -44,7 +43,6 @@ def generate_token(user_id):
     }
     token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
     return token
-
 
 def verify_token(token):
     """Verify JWT token"""
@@ -61,7 +59,6 @@ def verify_token(token):
     except Exception as e:
         print(f"❌ Token verification error: {e}")
         return None
-
 
 @auth_bp.route('/register', methods=['POST', 'OPTIONS'])
 def register():
@@ -87,7 +84,7 @@ def register():
             return jsonify({'error': 'User with this email already exists'}), 409
         
         token = generate_token(user['_id'])
-        print(f"✅ New user registered: {email}, token generated")
+        print(f"New user registered: {email}, token generated")
         
         return jsonify({
             'message': 'Registration successful',
@@ -96,7 +93,7 @@ def register():
         }), 201
         
     except Exception as e:
-        print(f"❌ Registration error: {e}")
+        print(f"Registration error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @auth_bp.route('/login', methods=['POST', 'OPTIONS'])
@@ -122,17 +119,17 @@ def login():
             return jsonify({'error': 'Invalid email or password'}), 401
         
         token = generate_token(user['_id'])
-        print(f"✅ User logged in: {email}, token generated")
-        print(f"🖼️ Avatar: {user.get('avatar')}")  # Debug log
+        print(f"User logged in: {email}, token generated")
+        print(f"Avatar: {user.get('avatar')}")
         
         return jsonify({
             'message': 'Login successful',
             'token': token,
-            'user': user  # This should include avatar
+            'user': user
         }), 200
         
     except Exception as e:
-        print(f"❌ Login error: {e}")
+        print(f"Login error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @auth_bp.route('/me', methods=['GET', 'OPTIONS'])
@@ -256,7 +253,7 @@ def update_profile():
     
     try:
         data = request.get_json()
-        print(f"📥 Received update data: {data}")  # Debug
+        print(f"Received update data: {data}")
         
         update_data = {}
         if 'name' in data:
@@ -273,11 +270,11 @@ def update_profile():
             update_data['location'] = data['location']
         if 'bio' in data:
             update_data['bio'] = data['bio']
-        if 'avatar' in data and data['avatar']:  # ✅ Ensure avatar is not empty
+        if 'avatar' in data and data['avatar']:
             update_data['avatar'] = data['avatar']
-            print(f"✅ Updating avatar to: {data['avatar']}")  # Debug
+            print(f"Updating avatar to: {data['avatar']}")
         
-        print(f"💾 Updating database with: {update_data}")  # Debug
+        print(f"💾 Updating database with: {update_data}")
         
         user_model.collection.update_one(
             {'_id': ObjectId(user_id)},
@@ -285,7 +282,7 @@ def update_profile():
         )
         
         user = user_model.get_by_id(user_id)
-        print(f"✅ Updated user avatar: {user.get('avatar')}")  # Debug
+        print(f"Updated user avatar: {user.get('avatar')}")
         
         return jsonify({
             'message': 'Profile updated successfully',

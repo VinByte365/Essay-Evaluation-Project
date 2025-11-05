@@ -187,23 +187,21 @@ def get_essays():
     if not user_id:
         return jsonify({'error': 'Invalid token'}), 401
     
-    print(f"📚 Fetching essays for user: {user_id}")
+    print(f"Fetching essays for user: {user_id}")
     
     try:
-        # Get all essays for user
+
         essays = list(mongo.db.essays.find({'user_id': user_id}).sort('upload_date', -1))
         
-        # Format essays for response
+ 
         formatted_essays = []
         for essay in essays:
-            # Handle upload_date properly
             upload_date = essay.get('upload_date')
             if hasattr(upload_date, 'isoformat'):
                 upload_date_str = upload_date.isoformat()
             else:
                 upload_date_str = str(upload_date) if upload_date else None
             
-            # Handle evaluated_at
             evaluated_at = essay.get('evaluated_at')
             if hasattr(evaluated_at, 'isoformat'):
                 evaluated_at_str = evaluated_at.isoformat()
@@ -213,7 +211,7 @@ def get_essays():
             formatted_essay = {
                 'id': str(essay['_id']),
                 'title': essay.get('title', 'Untitled'),
-                'content': essay.get('content', ''),  # ✅ Include content field
+                'content': essay.get('content', ''),  
                 'upload_date': upload_date_str,
                 'status': essay.get('status', 'pending'),
                 'score': essay.get('score', 0),
@@ -237,7 +235,6 @@ def get_essays():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-
 
 @api_bp.route('/essays/<essay_id>', methods=['GET', 'DELETE', 'OPTIONS'])
 def handle_essay(essay_id):
@@ -367,7 +364,6 @@ def evaluate_essay(essay_id):
         if not essay:
             return jsonify({'error': 'Essay not found'}), 404
         
-        # Check if already evaluated
         if essay.get('ai_evaluated'):
             return jsonify({
                 'message': 'Essay already evaluated',
@@ -389,14 +385,12 @@ def evaluate_essay(essay_id):
                 }
             }), 200
         
-        # Evaluate with AI
-        print(f"🤖 Re-evaluating essay: {essay.get('title')}")
+        print(f"Re-evaluating essay: {essay.get('title')}")
         evaluation = llm_service.evaluate_essay(
             title=essay.get('title', 'Untitled'),
             content=essay.get('content', '')
         )
         
-        # Update essay
         mongo.db.essays.update_one(
             {'_id': ObjectId(essay_id)},
             {
