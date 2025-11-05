@@ -33,58 +33,64 @@ def get_posts():
         return jsonify({'error': 'Invalid token'}), 401
     
     try:
-        # Get current user's friends list
         current_user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
         friends_list = current_user.get('friends', [])
         
-        # Get posts (public + friends-only from friends)
         posts = list(mongo.db.posts.find({
             '$or': [
                 {'visibility': 'public'},
                 {'author_id': {'$in': friends_list}, 'visibility': 'friends'},
-                {'author_id': user_id}  # Include own posts
+                {'author_id': user_id}
             ]
         }).sort('shared_at', -1))
         
-        # Populate author details and essay info
         result = []
         for post in posts:
-            # Get author info including avatar
             author = mongo.db.users.find_one({'_id': ObjectId(post['author_id'])})
-            
-            # Get essay info
             essay = mongo.db.essays.find_one({'_id': ObjectId(post['essay_id'])})
             
+            # ✅ NEW: If this is a shared post, fetch original author
+            original_author = None
+            if post.get('is_share') and post.get('original_author_id'):
+                original_author = mongo.db.users.find_one({'_id': ObjectId(post['original_author_id'])})
+            
             if author and essay:
-                # Convert likes array to count
                 likes = post.get('likes', [])
                 likes_count = len(likes) if isinstance(likes, list) else likes
                 
-                # Convert comments array to count
                 comments = post.get('comments', [])
                 comments_count = len(comments) if isinstance(comments, list) else comments
                 
-                # ✅ NEW: Get essay content preview (first 300 characters)
                 essay_content = essay.get('content', '')
                 content_preview = essay_content[:300] if essay_content else None
                 
-                result.append({
-                    'id': str(post['_id']),
-                    'author_id': post['author_id'],
-                    'author_name': author.get('name', 'Unknown'),
-                    'author_email': author.get('email', ''),
-                    'author_avatar': author.get('avatar'),
-                    'essay_id': post['essay_id'],
-                    'essay_title': essay.get('title', 'Untitled'),
-                    'essay_score': essay.get('score', 0),
-                    'essay_content': content_preview,  # ✅ Add content preview
-                    'caption': post.get('caption', ''),
-                    'shared_at': post.get('shared_at').isoformat() if hasattr(post.get('shared_at'), 'isoformat') else str(post.get('shared_at')),
-                    'visibility': post.get('visibility', 'public'),
-                    'likes': likes_count,
-                    'comments': comments_count,
-                    'shares': post.get('shares', 0)
-                })
+                post_data = {
+                'id': str(post['_id']),
+                'author_id': post['author_id'],
+                'author_name': author.get('name', 'Unknown'),
+                'author_email': author.get('email', ''),
+                'author_avatar': author.get('avatar'),
+                'essay_id': post['essay_id'],
+                'essay_title': essay.get('title', 'Untitled'),
+                'essay_score': essay.get('score', 0),
+                'essay_content': content_preview,
+                'caption': post.get('caption', ''),
+                'shared_at': post.get('shared_at').isoformat() if hasattr(post.get('shared_at'), 'isoformat') else str(post.get('shared_at')),
+                'visibility': post.get('visibility', 'public'),
+                'likes': likes_count,
+                'comments': comments_count,
+                'shares': post.get('shares', 0),
+                'is_share': post.get('is_share', False),
+                'original_post_id': post.get('original_post_id'),
+                'original_author_id': post.get('original_author_id'),
+                'original_author_name': original_author.get('name', 'Unknown') if original_author else None,
+                'original_author_avatar': original_author.get('avatar') if original_author else None,
+                # ✅ NEW: Include the original post's upload date
+                'original_shared_at': post.get('original_shared_at').isoformat() if hasattr(post.get('original_shared_at'), 'isoformat') else str(post.get('original_shared_at')),
+                }
+
+                
+                result.append(post_data)
         
         return jsonify({'posts': result}), 200
         
@@ -307,17 +313,24 @@ def get_comments(post_id):
         
         comments = post.get('comments', [])
         
-        # Populate user details for each comment including avatar
+        # ✅ Populate user details for each comment including avatar
         populated_comments = []
         for comment in comments:
             user = mongo.db.users.find_one({'_id': ObjectId(comment['user_id'])})
             if user:
+                # ✅ Convert created_at to ISO format
+                created_at = comment.get('created_at')
+                if hasattr(created_at, 'isoformat'):
+                    created_at = created_at.isoformat()
+                else:
+                    created_at = str(created_at)
+                
                 populated_comments.append({
                     'user_id': comment['user_id'],
                     'user_name': user.get('name', 'Unknown'),
                     'user_avatar': user.get('avatar'),
                     'text': comment['text'],
-                    'created_at': comment['created_at']
+                    'created_at': created_at  # ✅ Now it's a proper ISO string
                 })
         
         return jsonify({'comments': populated_comments}), 200
@@ -421,27 +434,43 @@ def share_post(post_id):
         # Get current user details
         user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
         
+        # If the post being shared is already a shared post, get the ORIGINAL author info
+        if original_post.get('is_share'):
+            original_author_id = original_post.get('original_author_id')
+            original_author_name = original_post.get('original_author_name')
+            # ✅ NEW: Get the ORIGINAL post's upload date (not the share date)
+            original_shared_at = original_post.get('original_shared_at')
+            essay_id = original_post.get('essay_id')
+        else:
+            original_author_id = original_post.get('author_id')
+            original_author_name = original_post.get('author_name')
+            # ✅ NEW: Store the original post's upload date
+            original_shared_at = original_post.get('shared_at')
+            essay_id = original_post.get('essay_id')
+        
         # Get essay details
-        essay = mongo.db.essays.find_one({'_id': ObjectId(original_post['essay_id'])})
+        essay = mongo.db.essays.find_one({'_id': ObjectId(essay_id)})
         
         # Create shared post
         shared_post = {
             'author_id': user_id,
             'author_name': user.get('name', 'Unknown'),
             'author_email': user.get('email', ''),
-            'essay_id': original_post['essay_id'],
+            'essay_id': essay_id,
             'essay_title': essay.get('title', 'Untitled'),
             'essay_score': essay.get('score', 0),
             'caption': share_caption,
-            'visibility': 'public',  # Shares are always public
-            'shared_at': datetime.now(),
+            'visibility': 'public',
+            'shared_at': datetime.now(),  # This is when it was shared
             'likes': [],
             'comments': [],
             'shares': 0,
-            'is_share': True,  # Flag to identify as shared post
-            'original_post_id': post_id,  # Reference to original post
-            'original_author_id': original_post['author_id'],
-            'original_author_name': original_post.get('author_name', 'Unknown')
+            'is_share': True,
+            'original_post_id': post_id,
+            'original_author_id': original_author_id,
+            'original_author_name': original_author_name,
+            # ✅ NEW: Store the original post's upload date
+            'original_shared_at': original_shared_at,
         }
         
         result = mongo.db.posts.insert_one(shared_post)
@@ -487,6 +516,30 @@ def manage_post(post_id):
     # Handle DELETE
     if request.method == 'DELETE':
         try:
+            # ✅ NEW: If this is a shared post, decrement the share count of the original post
+            if post.get('is_share') and post.get('original_post_id'):
+                mongo.db.posts.update_one(
+                    {'_id': ObjectId(post['original_post_id'])},
+                    {'$inc': {'shares': -1}}
+                )
+            
+            # ✅ NEW: If this is an original post, delete all shared posts referencing it
+            if not post.get('is_share'):
+                # Find all shared posts that reference this original post
+                shared_posts = list(mongo.db.posts.find({
+                    'original_post_id': post_id,
+                    'is_share': True
+                }))
+                
+                # Delete all shared posts
+                if shared_posts:
+                    mongo.db.posts.delete_many({
+                        'original_post_id': post_id,
+                        'is_share': True
+                    })
+                    print(f"Deleted {len(shared_posts)} shared posts when original post {post_id} was deleted")
+            
+            # Delete the post itself
             result = mongo.db.posts.delete_one({'_id': ObjectId(post_id)})
             
             if result.deleted_count > 0:
@@ -516,12 +569,14 @@ def manage_post(post_id):
             print(f"Error updating post: {str(e)}")
             return jsonify({'error': str(e)}), 500
 
-    """Update a post's caption"""
+@posts_bp.route('/posts/<post_id>/comments/<comment_index>', methods=['DELETE', 'OPTIONS'])
+def delete_comment(post_id, comment_index):
+    """Delete a comment from a post"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'PUT, OPTIONS')
+        response.headers.add('Access-Control-Allow-Methods', 'DELETE, OPTIONS')
         return response, 200
     
     auth_header = request.headers.get('Authorization')
@@ -541,25 +596,29 @@ def manage_post(post_id):
         if not post:
             return jsonify({'error': 'Post not found'}), 404
         
-        # Check if user owns the post
-        if post['author_id'] != user_id:
-            return jsonify({'error': 'You can only edit your own posts'}), 403
+        comments = post.get('comments', [])
+        comment_idx = int(comment_index)
         
-        # Get new caption from request
-        data = request.get_json()
-        new_caption = data.get('caption', '')
+        if comment_idx < 0 or comment_idx >= len(comments):
+            return jsonify({'error': 'Comment not found'}), 404
+        
+        # Check if user owns the comment
+        comment = comments[comment_idx]
+        if comment.get('user_id') != user_id:
+            return jsonify({'error': 'You can only delete your own comments'}), 403
+        
+        # Remove the comment
+        comments.pop(comment_idx)
         
         # Update the post
-        result = mongo.db.posts.update_one(
+        mongo.db.posts.update_one(
             {'_id': ObjectId(post_id)},
-            {'$set': {'caption': new_caption}}
+            {'$set': {'comments': comments}}
         )
         
-        if result.modified_count > 0:
-            return jsonify({'message': 'Post updated successfully'}), 200
-        else:
-            return jsonify({'message': 'No changes made'}), 200
-            
+        print(f"✅ Comment deleted from post {post_id} by user {user_id}")
+        return jsonify({'message': 'Comment deleted successfully'}), 200
+        
     except Exception as e:
-        print(f"Error updating post: {str(e)}")
+        print(f"❌ Error deleting comment: {str(e)}")
         return jsonify({'error': str(e)}), 500

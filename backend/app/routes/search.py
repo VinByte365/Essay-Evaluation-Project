@@ -34,17 +34,16 @@ def global_search():
     if not query or len(query) < 2:
         return jsonify({'posts': [], 'users': []}), 200
     
-    
     is_author_search = False
     search_term = query
     
-
+    # Check if search is for author (quoted)
     quoted_match = re.match(r'^"(.+)"$', query)
     if quoted_match:
         is_author_search = True
         search_term = quoted_match.group(1).strip()
     
-
+    # Search users
     users = list(mongo.db.users.find({
         '$or': [
             {'name': {'$regex': search_term, '$options': 'i'}},
@@ -52,13 +51,13 @@ def global_search():
         ]
     }).limit(5))
     
-
     for user in users:
         user['_id'] = str(user['_id'])
         user['id'] = user['_id']
         if 'password_hash' in user:
             del user['password_hash']
     
+    # Search posts
     if is_author_search:
         post_search_condition = {'author_name': {'$regex': search_term, '$options': 'i'}}
     else:
@@ -67,8 +66,6 @@ def global_search():
     posts = list(mongo.db.posts.find({
         '$and': [
             post_search_condition,
-            
-            # Visibility condition
             {
                 '$or': [
                     {'author_id': user_id},
@@ -82,13 +79,18 @@ def global_search():
         ]
     }).sort('shared_at', -1).limit(5))
     
-    # Format posts
+    # ✅ Format posts with proper date conversion
     for post in posts:
         post['_id'] = str(post['_id'])
         post['id'] = post['_id']
+        # ✅ Convert datetime to ISO format string
+        if 'shared_at' in post and hasattr(post['shared_at'], 'isoformat'):
+            post['shared_at'] = post['shared_at'].isoformat()
+        else:
+            post['shared_at'] = str(post.get('shared_at', ''))
     
     return jsonify({
         'posts': posts,
         'users': users,
-        'search_type': 'author' if is_author_search else 'title'  # Optional: tell frontend what type of search
+        'search_type': 'author' if is_author_search else 'title'
     }), 200
