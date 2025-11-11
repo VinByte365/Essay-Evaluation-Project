@@ -14,7 +14,7 @@ essay_model = Essay(mongo.db)
 
 @posts_bp.route('/posts', methods=['GET', 'OPTIONS'])
 def get_posts():
-    """Get all posts (feed)"""
+    """Get all posts (feed) - allow both authenticated and unauthenticated users"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
@@ -23,33 +23,42 @@ def get_posts():
         return response, 200
     
     auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
-        return jsonify({'error': 'No token provided'}), 401
+    user_id = None
+    friends_list = []
     
-    token = auth_header.split(' ')[1]
-    user_id = verify_token(token)
-    
-    if not user_id:
-        return jsonify({'error': 'Invalid token'}), 401
+    # ✅ NEW: Check if token exists - if not, user is not authenticated
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+        user_id = verify_token(token)
+        
+        if user_id:
+            # Get user's friends list
+            current_user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+            friends_list = current_user.get('friends', []) if current_user else []
     
     try:
-        current_user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
-        friends_list = current_user.get('friends', [])
-        
-        posts = list(mongo.db.posts.find({
-            '$or': [
-                {'visibility': 'public'},
-                {'author_id': {'$in': friends_list}, 'visibility': 'friends'},
-                {'author_id': user_id}
-            ]
-        }).sort('shared_at', -1))
+        # ✅ NEW: Adjust query based on whether user is authenticated
+        if user_id:
+            # Authenticated user: show public posts, friends' posts, and their own posts
+            posts = list(mongo.db.posts.find({
+                '$or': [
+                    {'visibility': 'public'},
+                    {'author_id': {'$in': friends_list}, 'visibility': 'friends'},
+                    {'author_id': user_id}
+                ]
+            }).sort('shared_at', -1))
+        else:
+            # Unauthenticated user: only show public posts
+            posts = list(mongo.db.posts.find({
+                'visibility': 'public'
+            }).sort('shared_at', -1))
         
         result = []
         for post in posts:
             author = mongo.db.users.find_one({'_id': ObjectId(post['author_id'])})
             essay = mongo.db.essays.find_one({'_id': ObjectId(post['essay_id'])})
             
-            # ✅ NEW: If this is a shared post, fetch original author
+            # Get original author if this is a shared post
             original_author = None
             if post.get('is_share') and post.get('original_author_id'):
                 original_author = mongo.db.users.find_one({'_id': ObjectId(post['original_author_id'])})
@@ -65,30 +74,28 @@ def get_posts():
                 content_preview = essay_content[:300] if essay_content else None
                 
                 post_data = {
-                'id': str(post['_id']),
-                'author_id': post['author_id'],
-                'author_name': author.get('name', 'Unknown'),
-                'author_email': author.get('email', ''),
-                'author_avatar': author.get('avatar'),
-                'essay_id': post['essay_id'],
-                'essay_title': essay.get('title', 'Untitled'),
-                'essay_score': essay.get('score', 0),
-                'essay_content': content_preview,
-                'caption': post.get('caption', ''),
-                'shared_at': post.get('shared_at').isoformat() if hasattr(post.get('shared_at'), 'isoformat') else str(post.get('shared_at')),
-                'visibility': post.get('visibility', 'public'),
-                'likes': likes_count,
-                'comments': comments_count,
-                'shares': post.get('shares', 0),
-                'is_share': post.get('is_share', False),
-                'original_post_id': post.get('original_post_id'),
-                'original_author_id': post.get('original_author_id'),
-                'original_author_name': original_author.get('name', 'Unknown') if original_author else None,
-                'original_author_avatar': original_author.get('avatar') if original_author else None,
-                # ✅ NEW: Include the original post's upload date
-                'original_shared_at': post.get('original_shared_at').isoformat() if hasattr(post.get('original_shared_at'), 'isoformat') else str(post.get('original_shared_at')),
+                    'id': str(post['_id']),
+                    'author_id': post['author_id'],
+                    'author_name': author.get('name', 'Unknown'),
+                    'author_email': author.get('email', ''),
+                    'author_avatar': author.get('avatar'),
+                    'essay_id': post['essay_id'],
+                    'essay_title': essay.get('title', 'Untitled'),
+                    'essay_score': essay.get('score', 0),
+                    'essay_content': content_preview,
+                    'caption': post.get('caption', ''),
+                    'shared_at': post.get('shared_at').isoformat() if hasattr(post.get('shared_at'), 'isoformat') else str(post.get('shared_at')),
+                    'visibility': post.get('visibility', 'public'),
+                    'likes': likes_count,
+                    'comments': comments_count,
+                    'shares': post.get('shares', 0),
+                    'is_share': post.get('is_share', False),
+                    'original_post_id': post.get('original_post_id'),
+                    'original_author_id': post.get('original_author_id'),
+                    'original_author_name': original_author.get('name', 'Unknown') if original_author else None,
+                    'original_author_avatar': original_author.get('avatar') if original_author else None,
+                    'original_shared_at': post.get('original_shared_at').isoformat() if hasattr(post.get('original_shared_at'), 'isoformat') else str(post.get('original_shared_at')),
                 }
-
                 
                 result.append(post_data)
         
@@ -287,7 +294,7 @@ def comment_post(post_id):
 
 @posts_bp.route('/posts/<post_id>/comments', methods=['GET', 'OPTIONS'])
 def get_comments(post_id):
-    """Get comments for a post"""
+    """Get comments for a post - Allows unauthenticated access"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
@@ -295,22 +302,44 @@ def get_comments(post_id):
         response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
         return response, 200
     
+    # ✅ Authentication is now optional for GET
+    user_id = None
     auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
-        return jsonify({'error': 'No token provided'}), 401
-    
-    token = auth_header.split(' ')[1]
-    user_id = verify_token(token)
-    
-    if not user_id:
-        return jsonify({'error': 'Invalid token'}), 401
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+        user_id = verify_token(token)
     
     try:
+        # Validate post_id format
+        if not ObjectId.is_valid(post_id):
+            return jsonify({'error': 'Invalid post ID format'}), 400
+        
         post = mongo.db.posts.find_one({'_id': ObjectId(post_id)})
         
         if not post:
             return jsonify({'error': 'Post not found'}), 404
         
+        # Check post visibility
+        post_visibility = post.get('visibility', 'public')
+        
+        if post_visibility == 'friends':
+            # Friends-only post - require authentication
+            if not user_id:
+                return jsonify({'error': 'Authentication required for friends-only content'}), 401
+            
+            # Check if user is friends with post author
+            current_user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+            if not current_user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            friends_list = current_user.get('friends', [])
+            post_author_id = post.get('author_id')
+            
+            # Allow if user is the post author or is friends with the author
+            if user_id != post_author_id and post_author_id not in friends_list:
+                return jsonify({'error': 'Friends only'}), 403
+        
+        # If we reach here, user can view comments (either public post or authorized for friends-only)
         comments = post.get('comments', [])
         
         # ✅ Populate user details for each comment including avatar
@@ -330,13 +359,15 @@ def get_comments(post_id):
                     'user_name': user.get('name', 'Unknown'),
                     'user_avatar': user.get('avatar'),
                     'text': comment['text'],
-                    'created_at': created_at  # ✅ Now it's a proper ISO string
+                    'created_at': created_at
                 })
         
         return jsonify({'comments': populated_comments}), 200
         
     except Exception as e:
         print(f"Error fetching comments: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @posts_bp.route('/posts/my-posts', methods=['GET', 'OPTIONS'])

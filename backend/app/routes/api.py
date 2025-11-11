@@ -238,7 +238,7 @@ def get_essays():
 
 @api_bp.route('/essays/<essay_id>', methods=['GET', 'DELETE', 'OPTIONS'])
 def handle_essay(essay_id):
-    """Get or delete a specific essay"""
+    """Get or delete a specific essay - GET allows unauthenticated access for public posts"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
@@ -246,67 +246,122 @@ def handle_essay(essay_id):
         response.headers.add('Access-Control-Allow-Methods', 'GET, DELETE, OPTIONS')
         return response, 200
     
-    auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
-        return jsonify({'error': 'No token provided'}), 401
-    
-    token = auth_header.split(' ')[1]
-    user_id = verify_token(token)
-    
-    if not user_id:
-        return jsonify({'error': 'Invalid token'}), 401
-    
-    # Handle GET request
+    # Handle GET request - Allow unauthenticated access for public posts
     if request.method == 'GET':
         try:
+            # Try to get user_id if authenticated (optional)
+            user_id = None
+            auth_header = request.headers.get('Authorization')
+            if auth_header and auth_header.startswith('Bearer '):
+                token = auth_header.split(' ')[1]
+                user_id = verify_token(token)
+            
+            # Validate essay_id format
+            if not ObjectId.is_valid(essay_id):
+                return jsonify({'error': 'Invalid essay ID format'}), 400
+            
             essay = mongo.db.essays.find_one({'_id': ObjectId(essay_id)})
             
             if not essay:
                 return jsonify({'error': 'Essay not found'}), 404
             
-            # Check visibility permissions
-            if essay['user_id'] != user_id:
-                # Check if this essay has been shared as a post
-                post = mongo.db.posts.find_one({'essay_id': essay_id})
-                if not post:
-                    return jsonify({'error': 'Unauthorized'}), 403
+            # If user owns the essay, grant full access
+            if user_id and essay['user_id'] == user_id:
+                essay_data = {
+                    'id': str(essay['_id']),
+                    'title': essay.get('title', 'Untitled'),
+                    'content': essay.get('content', ''),
+                    'upload_date': essay.get('upload_date'),
+                    'status': essay.get('status', 'completed'),
+                    'score': essay.get('score'),
+                    'feedback': essay.get('feedback'),
+                    'grammar': essay.get('grammar'),
+                    'structure': essay.get('structure'),
+                    'content_quality': essay.get('content_quality'),
+                    'coherence': essay.get('coherence'),
+                    'suggestions': essay.get('suggestions', []),
+                    'user_id': essay.get('user_id')
+                }
+                return jsonify(essay_data), 200
+            
+            # Check if essay has been shared as a post
+            post = mongo.db.posts.find_one({'essay_id': essay_id})
+            
+            if not post:
+                return jsonify({'error': 'Essay not available publicly'}), 403
+            
+            # Check post visibility
+            if post['visibility'] == 'public':
+                # Public post - anyone can view (authenticated or not)
+                essay_data = {
+                    'id': str(essay['_id']),
+                    'title': essay.get('title', 'Untitled'),
+                    'content': essay.get('content', ''),
+                    'upload_date': essay.get('upload_date'),
+                    'status': essay.get('status', 'completed'),
+                    'score': essay.get('score'),
+                    'feedback': essay.get('feedback'),
+                    'grammar': essay.get('grammar'),
+                    'structure': essay.get('structure'),
+                    'content_quality': essay.get('content_quality'),
+                    'coherence': essay.get('coherence'),
+                    'suggestions': essay.get('suggestions', []),
+                    'user_id': essay.get('user_id')
+                }
+                return jsonify(essay_data), 200
+            
+            elif post['visibility'] == 'friends':
+                # Friends-only post - require authentication
+                if not user_id:
+                    return jsonify({'error': 'Authentication required for friends-only content'}), 401
                 
-                # Check post visibility
-                if post['visibility'] == 'public':
-                    pass
-                elif post['visibility'] == 'friends':
-                    current_user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
-                    friends_list = current_user.get('friends', [])
-                    
-                    if post['author_id'] not in friends_list:
-                        return jsonify({'error': 'Unauthorized - Friends only'}), 403
-                else:
-                    return jsonify({'error': 'Unauthorized'}), 403
+                current_user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+                if not current_user:
+                    return jsonify({'error': 'User not found'}), 404
+                
+                friends_list = current_user.get('friends', [])
+                
+                if post['author_id'] not in friends_list:
+                    return jsonify({'error': 'Friends only'}), 403
+                
+                essay_data = {
+                    'id': str(essay['_id']),
+                    'title': essay.get('title', 'Untitled'),
+                    'content': essay.get('content', ''),
+                    'upload_date': essay.get('upload_date'),
+                    'status': essay.get('status', 'completed'),
+                    'score': essay.get('score'),
+                    'feedback': essay.get('feedback'),
+                    'grammar': essay.get('grammar'),
+                    'structure': essay.get('structure'),
+                    'content_quality': essay.get('content_quality'),
+                    'coherence': essay.get('coherence'),
+                    'suggestions': essay.get('suggestions', []),
+                    'user_id': essay.get('user_id')
+                }
+                return jsonify(essay_data), 200
             
-            essay_data = {
-                'id': str(essay['_id']),
-                'title': essay.get('title', 'Untitled'),
-                'content': essay.get('content', ''),
-                'upload_date': essay.get('upload_date'),
-                'status': essay.get('status', 'completed'),
-                'score': essay.get('score'),
-                'feedback': essay.get('feedback'),
-                'grammar': essay.get('grammar'),
-                'structure': essay.get('structure'),
-                'content_quality': essay.get('content_quality'),
-                'coherence': essay.get('coherence'),
-                'suggestions': essay.get('suggestions', []),
-                'user_id': essay.get('user_id')
-            }
-            
-            return jsonify(essay_data), 200
+            else:
+                return jsonify({'error': 'Unauthorized'}), 403
             
         except Exception as e:
             print(f"Error fetching essay: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return jsonify({'error': str(e)}), 400
     
-    # Handle DELETE request
+    # Handle DELETE request - Requires authentication
     elif request.method == 'DELETE':
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'No token provided'}), 401
+        
+        token = auth_header.split(' ')[1]
+        user_id = verify_token(token)
+        
+        if not user_id:
+            return jsonify({'error': 'Invalid token'}), 401
+        
         try:
             essay = mongo.db.essays.find_one({'_id': ObjectId(essay_id)})
             
@@ -423,6 +478,139 @@ def evaluate_essay(essay_id):
         
     except Exception as e:
         print(f"Error evaluating essay: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@api_bp.route('/essays/<essay_id>/statements', methods=['GET', 'OPTIONS'])
+def get_essay_statements(essay_id):
+    """Get atomic statements for an essay"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        return response, 200
+    
+    try:
+        # Optional authentication (allows public posts to be viewed)
+        user_id = None
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+            user_id = verify_token(token)
+        
+        # Validate essay_id format
+        if not ObjectId.is_valid(essay_id):
+            return jsonify({'error': 'Invalid essay ID format'}), 400
+        
+        # ✅ Use model method instead of direct query
+        essay = essay_model.get_by_id(essay_id)
+        if not essay:
+            return jsonify({'error': 'Essay not found'}), 404
+        
+        # Check access permissions (same logic as essay viewing)
+        if user_id != essay.get('user_id'):
+            # Check if essay is shared as public post
+            post = mongo.db.posts.find_one({'essay_id': essay_id})
+            if not post or post.get('visibility') != 'public':
+                return jsonify({'error': 'Unauthorized'}), 403
+        
+        # ✅ Use model method to check if statements exist
+        if essay_model.has_statements(essay_id):
+            print(f"📦 Returning cached statements for essay {essay_id}")
+            statements_data = essay_model.get_statements(essay_id)
+            return jsonify({
+                'statements': statements_data['statements'],
+                'summary': statements_data['summary'],
+                'cached': True
+            }), 200
+        
+        # Extract statements using LLM
+        print(f"🔬 Extracting new statements for essay {essay_id}")
+        content = essay.get('content', '')
+        
+        if not content:
+            return jsonify({'error': 'Essay has no content'}), 400
+        
+        result = llm_service.extract_atomic_statements(content)
+        
+        # ✅ Use model method to save statements
+        essay_model.add_statements(
+            essay_id,
+            result['statements'],
+            result['summary']
+        )
+        
+        return jsonify({
+            'statements': result['statements'],
+            'summary': result['summary'],
+            'cached': False
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error getting statements: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@api_bp.route('/essays/<essay_id>/statements/regenerate', methods=['POST', 'OPTIONS'])
+def regenerate_statements(essay_id):
+    """Force regeneration of statements (requires authentication)"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        return response, 200
+    
+    # Require authentication for regeneration
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({'error': 'Authentication required'}), 401
+    
+    token = auth_header.split(' ')[1]
+    user_id = verify_token(token)
+    if not user_id:
+        return jsonify({'error': 'Invalid token'}), 401
+    
+    try:
+        # Validate essay_id format
+        if not ObjectId.is_valid(essay_id):
+            return jsonify({'error': 'Invalid essay ID'}), 400
+        
+        # ✅ Use model method
+        essay = essay_model.get_by_id(essay_id)
+        if not essay:
+            return jsonify({'error': 'Essay not found'}), 404
+        
+        # Check ownership
+        if essay['user_id'] != user_id:
+            return jsonify({'error': 'Unauthorized - not your essay'}), 403
+        
+        # Extract statements
+        content = essay.get('content', '')
+        if not content:
+            return jsonify({'error': 'Essay has no content'}), 400
+        
+        print(f"🔄 Regenerating statements for essay {essay_id}")
+        result = llm_service.extract_atomic_statements(content)
+        
+        # ✅ Use model method to update statements
+        essay_model.regenerate_statements(
+            essay_id,
+            result['statements'],
+            result['summary']
+        )
+        
+        return jsonify({
+            'statements': result['statements'],
+            'summary': result['summary'],
+            'message': 'Statements regenerated successfully'
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error regenerating statements: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500

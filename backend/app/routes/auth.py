@@ -231,16 +231,9 @@ def upload_avatar():
     
     return jsonify({'error': 'Invalid file type. Allowed: PNG, JPG, JPEG, GIF, WEBP'}), 400
 
-@auth_bp.route('/profile', methods=['PUT', 'OPTIONS'])
+@auth_bp.route('/profile', methods=['PUT'])
 def update_profile():
-    """Update user profile information"""
-    if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'PUT, OPTIONS')
-        return response, 200
-    
+    """Update user profile"""
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
         return jsonify({'error': 'No token provided'}), 401
@@ -253,44 +246,47 @@ def update_profile():
     
     try:
         data = request.get_json()
-        print(f"Received update data: {data}")
         
-        update_data = {}
-        if 'name' in data:
-            update_data['name'] = data['name']
-        if 'email' in data:
-            existing = user_model.collection.find_one({
-                'email': data['email'],
-                '_id': {'$ne': ObjectId(user_id)}
-            })
-            if existing:
-                return jsonify({'error': 'Email already in use'}), 409
-            update_data['email'] = data['email']
-        if 'location' in data:
-            update_data['location'] = data['location']
-        if 'bio' in data:
-            update_data['bio'] = data['bio']
-        if 'avatar' in data and data['avatar']:
-            update_data['avatar'] = data['avatar']
-            print(f"Updating avatar to: {data['avatar']}")
+        # ✅ NEW: Handle avatar removal
+        update_data = {
+            'name': data.get('name'),
+            'email': data.get('email'),
+            'location': data.get('location', ''),
+            'bio': data.get('bio', ''),
+        }
         
-        print(f"💾 Updating database with: {update_data}")
+        # ✅ NEW: Only update avatar if provided (including empty string)
+        avatar = data.get('avatar')
+        if avatar is not None:  # Explicitly check for None, allow empty strings
+            update_data['avatar'] = avatar if avatar else None  # Set to None if empty
         
-        user_model.collection.update_one(
+        print(f"✅ Updating user {user_id} with data: {update_data}")  # Debug
+        
+        result = mongo.db.users.find_one_and_update(
             {'_id': ObjectId(user_id)},
-            {'$set': update_data}
+            {'$set': update_data},
+            return_document=True
         )
         
-        user = user_model.get_by_id(user_id)
-        print(f"Updated user avatar: {user.get('avatar')}")
+        if not result:
+            return jsonify({'error': 'User not found'}), 404
+        
+        print(f"✅ Updated user avatar to: {result.get('avatar')}")  # Debug
         
         return jsonify({
             'message': 'Profile updated successfully',
-            'user': user
+            'user': {
+                'id': str(result['_id']),
+                'name': result.get('name'),
+                'email': result.get('email'),
+                'avatar': result.get('avatar'),  # ✅ Return the avatar (or None)
+                'location': result.get('location'),
+                'bio': result.get('bio')
+            }
         }), 200
         
     except Exception as e:
-        print(f"Error updating profile: {str(e)}")
+        print(f"❌ Error updating profile: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @auth_bp.route('/change-password', methods=['POST', 'OPTIONS'])

@@ -1,6 +1,7 @@
 from datetime import datetime
 from bson import ObjectId
 
+
 class Essay:
     def __init__(self, db):
         self.collection = db['essays']
@@ -19,6 +20,11 @@ class Essay:
             'grammar_errors': None,
             'linguistic_stats': None,
             'ai_detection': None,
+            
+            # ✅ NEW: Atomic Statements (initially empty)
+            'statements': [],
+            'statement_summary': None,
+            'statements_generated_at': None,
         }
         result = self.collection.insert_one(essay)
         essay['_id'] = str(result.inserted_id)
@@ -51,6 +57,82 @@ class Essay:
         )
         
         return self.get_by_id(essay_id)
+    
+    # ✅ NEW: Add atomic statements to essay
+    def add_statements(self, essay_id, statements, summary):
+        """
+        Add atomic statements to an essay (first-time generation)
+        Called when user first views atomic statements tab
+        """
+        update_data = {
+            'statements': statements,
+            'statement_summary': summary,
+            'statements_generated_at': datetime.now(),
+        }
+        
+        result = self.collection.update_one(
+            {'_id': ObjectId(essay_id)},
+            {'$set': update_data}
+        )
+        
+        return result.modified_count > 0
+    
+    # ✅ NEW: Regenerate atomic statements
+    def regenerate_statements(self, essay_id, statements, summary):
+        """
+        Regenerate (update) atomic statements for an essay
+        Called when user clicks "Regenerate" button
+        """
+        update_data = {
+            'statements': statements,
+            'statement_summary': summary,
+            'statements_generated_at': datetime.now(),
+        }
+        
+        result = self.collection.update_one(
+            {'_id': ObjectId(essay_id)},
+            {'$set': update_data}
+        )
+        
+        return result.modified_count > 0
+    
+    # ✅ NEW: Check if statements exist
+    def has_statements(self, essay_id):
+        """
+        Check if essay already has atomic statements generated
+        Returns True if statements exist, False otherwise
+        """
+        essay = self.collection.find_one(
+            {'_id': ObjectId(essay_id)},
+            {'statements': 1}
+        )
+        
+        if essay and 'statements' in essay and essay['statements']:
+            return True
+        return False
+    
+    # ✅ NEW: Get only statements (optimized query)
+    def get_statements(self, essay_id):
+        """
+        Get only the statements and summary for an essay
+        More efficient than fetching entire document
+        """
+        essay = self.collection.find_one(
+            {'_id': ObjectId(essay_id)},
+            {
+                'statements': 1,
+                'statement_summary': 1,
+                'statements_generated_at': 1
+            }
+        )
+        
+        if essay:
+            return {
+                'statements': essay.get('statements', []),
+                'summary': essay.get('statement_summary', {}),
+                'generated_at': essay.get('statements_generated_at')
+            }
+        return None
     
     def get_by_id(self, essay_id):
         """Get essay by ID"""
