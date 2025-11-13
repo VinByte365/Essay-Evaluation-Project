@@ -1,4 +1,6 @@
 from flask import Blueprint, request, jsonify, send_from_directory, current_app
+from flask_mail import Message
+from app import mail
 from datetime import datetime, timedelta, timezone
 import jwt
 from app.models import User
@@ -83,19 +85,54 @@ def register():
         if not user:
             return jsonify({'error': 'User with this email already exists'}), 409
         
-        token = generate_token(user['_id'])
-        print(f"New user registered: {email}, token generated")
+        # Send verification email
+        verification_token = user.get('verification_token')
+        verification_url = f"http://localhost:3000/verify-email?token={verification_token}"
         
+        msg = Message(
+            subject='Verify Your Email - SoEssay',
+            recipients=[email],
+            html=f"""
+            <html>
+                <body style="font-family: Arial, sans-serif; padding: 20px; background-color: #f5f5f5;">
+                    <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px;">
+                        <h1 style="color: #335765; text-align: center;">SoEssay</h1>
+                        <h2 style="color: #335765;">Welcome, {name}! 🎓</h2>
+                        <p>Thank you for registering. Please verify your email to activate your account.</p>
+                        <div style="text-align: center; margin: 40px 0;">
+                            <a href="{verification_url}" 
+                               style="background-color: #335765; color: white; padding: 14px 30px; 
+                                      text-decoration: none; border-radius: 5px; display: inline-block;">
+                                Verify Email Address
+                            </a>
+                        </div>
+                        <p style="color: #666; font-size: 14px;">
+                            Or copy this link: <br>
+                            <a href="{verification_url}">{verification_url}</a>
+                        </p>
+                    </div>
+                </body>
+            </html>
+            """
+        )
+        
+        mail.send(msg)
+        print(f"✅ Verification email sent to {email}")
+        
+        # ✅ DON'T return token - user can't log in yet
         return jsonify({
-            'message': 'Registration successful',
-            'token': token,
-            'user': user
+            'message': 'Registration successful! Please check your email to verify your account.',
+            'email': email,
+            'verification_required': True,
+            'verified': False  # ✅ Important flag
         }), 201
         
     except Exception as e:
-        print(f"Registration error: {e}")
+        print(f"❌ Registration error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-
+  
 @auth_bp.route('/login', methods=['POST', 'OPTIONS'])
 def login():
     if request.method == 'OPTIONS':
@@ -118,9 +155,16 @@ def login():
         if not user:
             return jsonify({'error': 'Invalid email or password'}), 401
         
+        # ✅ Check if user returned an error (not verified)
+        if isinstance(user, dict) and 'error' in user:
+            return jsonify({
+                'error': user['error'],
+                'verified': False,
+                'email': email
+            }), 403  # Forbidden
+        
+        # User is verified, generate token
         token = generate_token(user['_id'])
-        print(f"User logged in: {email}, token generated")
-        print(f"Avatar: {user.get('avatar')}")
         
         return jsonify({
             'message': 'Login successful',
@@ -129,7 +173,7 @@ def login():
         }), 200
         
     except Exception as e:
-        print(f"Login error: {e}")
+        print(f"❌ Login error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @auth_bp.route('/me', methods=['GET', 'OPTIONS'])
@@ -450,3 +494,112 @@ def get_user_by_id(user_id):
         import traceback
         traceback.print_exc()
         return jsonify({'error': 'Failed to fetch user'}), 500
+
+@auth_bp.route('/resend-verification', methods=['POST', 'OPTIONS'])
+def resend_verification():
+    """Resend verification email"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        return response, 200
+    
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        
+        if not email:
+            return jsonify({'error': 'Email is required'}), 400
+        
+        user = mongo.db.users.find_one({'email': email})
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        if user.get('is_verified'):
+            return jsonify({'error': 'Email already verified'}), 400
+        
+        # Generate new token
+        import secrets
+        new_token = secrets.token_urlsafe(32)
+        
+        mongo.db.users.update_one(
+            {'_id': user['_id']},
+            {'$set': {'verification_token': new_token}}
+        )
+        
+        # Send email
+        verification_url = f"http://localhost:3000/verify-email?token={new_token}"
+        
+        msg = Message(
+            subject='Verify Your Email - SoEssay',
+            recipients=[email],
+            html=f"""
+            <html>
+                <body style="font-family: Arial, sans-serif; padding: 20px;">
+                    <h2 style="color: #335765;">Email Verification</h2>
+                    <p>Please verify your email to activate your account.</p>
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="{verification_url}" 
+                           style="background-color: #335765; color: white; padding: 12px 24px; 
+                                  text-decoration: none; border-radius: 5px; display: inline-block;">
+                            Verify Email Address
+                        </a>
+                    </div>
+                </body>
+            </html>
+            """
+        )
+        
+        mail.send(msg)
+        
+        return jsonify({'message': 'Verification email sent!'}), 200
+        
+    except Exception as e:
+        print(f"❌ Error resending verification: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@auth_bp.route('/verify-email/<token>', methods=['GET', 'OPTIONS'])
+def verify_email(token):
+    """Verify email with token and auto-login"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        return response, 200
+    
+    try:
+        # Get user by verification token
+        user = mongo.db.users.find_one({'verification_token': token})
+        
+        if not user:
+            return jsonify({'error': 'Invalid or expired verification token'}), 400
+        
+        # Mark as verified
+        mongo.db.users.update_one(
+            {'_id': user['_id']},
+            {'$set': {
+                'is_verified': True,
+                'verification_token': None
+            }}
+        )
+        
+        # ✅ Generate JWT token for auto-login
+        user_id = str(user['_id'])
+        auth_token = generate_token(user_id)
+        
+        # ✅ Get updated user data
+        verified_user = user_model.get_by_id(user_id)
+        
+        return jsonify({
+            'message': 'Email verified successfully! You are now logged in.',
+            'token': auth_token,
+            'user': verified_user
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Verification error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500

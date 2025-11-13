@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from werkzeug.security import generate_password_hash, check_password_hash
 from bson import ObjectId
-
+import secrets
 
 class User:
     def __init__(self, db):
@@ -9,36 +9,68 @@ class User:
         self.friend_requests = db['friend_requests']
     
     def create(self, name, email, password):
-        """Create a new user"""
+        """Create a new user with email verification"""
         if self.collection.find_one({'email': email}):
             return None
+        
+        # ✅ Generate verification token
+        verification_token = secrets.token_urlsafe(32)
         
         user = {
             'name': name,
             'email': email,
             'password_hash': generate_password_hash(password),
             'created_at': datetime.now(timezone.utc),
+            'avatar': None,  # ✅ Add default avatar
+            'location': None,  # ✅ Add location field
+            'bio': None,  # ✅ Add bio field
             'friends': [],
+            'is_verified': False,  # ✅ Email verification status
+            'verification_token': verification_token,  # ✅ Verification token
+            'verification_token_expires': None  # ✅ Optional: token expiry
         }
         
         result = self.collection.insert_one(user)
         user['_id'] = str(result.inserted_id)
+        user['id'] = user['_id']
         del user['password_hash']
+        
         return user
     
     def authenticate(self, email, password):
-        """Verify user credentials"""
+        """Verify user credentials and check if verified"""
         user = self.collection.find_one({'email': email})
         
-        if user and check_password_hash(user['password_hash'], password):
-            user['_id'] = str(user['_id'])
-            user['id'] = user['_id']
-            del user['password_hash']
-            # Avatar should be included automatically if it exists
-            return user
+        if not user or not check_password_hash(user['password_hash'], password):
+            return None
         
-        return None
-
+        # ✅ Check if email is verified
+        if not user.get('is_verified', False):
+            return {'error': 'Please verify your email first', 'verified': False}
+        
+        user['_id'] = str(user['_id'])
+        user['id'] = user['_id']
+        del user['password_hash']
+        
+        return user
+    
+    def verify_email(self, token):
+        """Verify user email with token"""
+        user = self.collection.find_one({'verification_token': token})
+        
+        if not user:
+            return None
+        
+        # Mark as verified
+        self.collection.update_one(
+            {'_id': user['_id']},
+            {'$set': {
+                'is_verified': True,
+                'verification_token': None  # Remove token after use
+            }}
+        )
+        
+        return True
     
     def get_by_id(self, user_id):
         """Get user by ID"""
@@ -107,7 +139,6 @@ class User:
         """Get pending friend requests for user (where they are the receiver)"""
         print(f"🔍 get_pending_requests for user: {user_id}")
         
-        # ✅ FIXED: Use to_user_id instead of receiver_id
         requests = list(self.friend_requests.find({
             'to_user_id': user_id,
             'status': 'pending'
@@ -115,10 +146,8 @@ class User:
         
         print(f"📊 Found {len(requests)} pending requests")
         
-        # Populate sender details
         result = []
         for req in requests:
-            # ✅ FIXED: Use from_user_id instead of sender_id
             sender_id = req.get('from_user_id')
             if not sender_id:
                 print(f"⚠️ Request missing from_user_id: {req}")
@@ -126,7 +155,7 @@ class User:
             
             sender = self.get_by_id(sender_id)
             if sender:
-                print(f"👤 Sender info: name={sender.get('name')}, avatar={sender.get('avatar')}")  # Debug log
+                print(f"👤 Sender info: name={sender.get('name')}, avatar={sender.get('avatar')}")
                 result.append({
                     '_id': str(req['_id']),
                     'from_user_id': sender_id,
@@ -134,7 +163,7 @@ class User:
                         'id': sender['id'],
                         'name': sender.get('name', 'Unknown'),
                         'email': sender.get('email', ''),
-                        'avatar': sender.get('avatar')  # ✅ Make sure this is included
+                        'avatar': sender.get('avatar')
                     },
                     'created_at': req.get('created_at'),
                     'status': req.get('status')
@@ -143,7 +172,6 @@ class User:
         
         print(f"✅ Returning {len(result)} requests")
         return result
-
     
     def accept_friend_request(self, request_id, user_id):
         """Accept a friend request"""
@@ -155,7 +183,6 @@ class User:
             print(f"❌ Request not found")
             return {'error': 'Request not found'}
         
-        # ✅ FIXED: Use to_user_id instead of receiver_id
         if request.get('to_user_id') != user_id:
             print(f"❌ Unauthorized: to_user_id={request.get('to_user_id')}, user_id={user_id}")
             return {'error': 'Unauthorized'}
@@ -164,7 +191,6 @@ class User:
             print(f"❌ Request already processed")
             return {'error': 'Request already processed'}
         
-        # Update request status
         self.friend_requests.update_one(
             {'_id': ObjectId(request_id)},
             {'$set': {
@@ -173,7 +199,6 @@ class User:
             }}
         )
         
-        # ✅ FIXED: Use from_user_id and to_user_id instead of sender_id/receiver_id
         self.collection.update_one(
             {'_id': ObjectId(request['from_user_id'])},
             {'$addToSet': {'friends': request['to_user_id']}}
@@ -196,7 +221,6 @@ class User:
             print(f"❌ Request not found")
             return {'error': 'Request not found'}
         
-        # ✅ FIXED: Use to_user_id instead of receiver_id
         if request.get('to_user_id') != user_id:
             print(f"❌ Unauthorized")
             return {'error': 'Unauthorized'}
@@ -217,7 +241,6 @@ class User:
         user = self.collection.find_one({'_id': ObjectId(user_id)})
         friend_ids = user.get('friends', [])
         
-        # ✅ FIXED: Use from_user_id and to_user_id
         pending_requests = list(self.friend_requests.find({
             '$or': [
                 {'from_user_id': user_id, 'status': 'pending'},
@@ -227,7 +250,6 @@ class User:
         
         excluded_ids = friend_ids + [user_id]
         for req in pending_requests:
-            # ✅ FIXED: Use from_user_id and to_user_id
             if req.get('from_user_id'):
                 excluded_ids.append(req['from_user_id'])
             if req.get('to_user_id'):
@@ -261,4 +283,3 @@ class User:
                 del user['password_hash']
         
         return users
-    

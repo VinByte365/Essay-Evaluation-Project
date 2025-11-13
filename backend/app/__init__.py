@@ -1,18 +1,31 @@
 from flask import Flask, send_from_directory
 from flask_cors import CORS, cross_origin
+from flask_mail import Mail  # ✅ Import Mail
 import os
 from .config import Config
 from .extensions import mongo, init_nlp
 
+# ✅ Initialize Mail object
+mail = Mail()
 
 def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
     app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB
- 
-    mongo.init_app(app)
     
-    # ✅ More aggressive CORS configuration
+    # ✅ Mailtrap Email Configuration
+    app.config['MAIL_SERVER'] = 'sandbox.smtp.mailtrap.io'  # Mailtrap SMTP server
+    app.config['MAIL_PORT'] = 2525  # Mailtrap port
+    app.config['MAIL_USE_TLS'] = True
+    app.config['MAIL_USE_SSL'] = False
+    app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME', 'your-mailtrap-username')
+    app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD', 'your-mailtrap-password')
+    app.config['MAIL_DEFAULT_SENDER'] = 'noreply@soessay.com'
+    
+    mongo.init_app(app)
+    mail.init_app(app)  # ✅ Initialize mail
+    
+    # CORS configuration
     app.config['CORS_HEADERS'] = 'Content-Type'
     
     CORS(app, 
@@ -23,6 +36,7 @@ def create_app(config_class=Config):
          expose_headers=['Content-Type', 'Authorization'])
     
     print("🔧 CORS configured: ALL methods enabled for ALL origins")
+    print("📧 Mailtrap email configured")  # ✅ Add confirmation
 
     # Configure upload folder
     UPLOAD_FOLDER = 'uploads/avatars'
@@ -56,6 +70,5 @@ def create_app(config_class=Config):
     
     from app.routes.notifications import notifications_bp
     app.register_blueprint(notifications_bp, url_prefix='/api')
-
 
     return app

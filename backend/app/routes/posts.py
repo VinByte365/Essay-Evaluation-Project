@@ -259,7 +259,7 @@ def create_post():
 
 @posts_bp.route('/posts/<post_id>/like', methods=['POST', 'OPTIONS'])
 def like_post(post_id):
-    """Toggle like on a post (like/unlike)"""
+    """Toggle like on a post"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
@@ -285,35 +285,43 @@ def like_post(post_id):
         
         likes = post.get('likes', [])
         
+        # ✅ Toggle like - if already liked, unlike it
         if user_id in likes:
+            # Unlike
             mongo.db.posts.update_one(
                 {'_id': ObjectId(post_id)},
                 {'$pull': {'likes': user_id}}
             )
-            return jsonify({'message': 'Post unliked', 'liked': False}), 200
+            action = 'unliked'
         else:
+            # Like
             mongo.db.posts.update_one(
                 {'_id': ObjectId(post_id)},
                 {'$addToSet': {'likes': user_id}}
             )
             
-            if post['author_id'] != user_id:
+            # ✅ Create notification only when liking (not unliking)
+            post_author_id = post.get('author_id')
+            if post_author_id and post_author_id != user_id:
                 liker = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+                essay = mongo.db.essays.find_one({'_id': ObjectId(post.get('essay_id'))})
                 
                 notification_model.create(
-                    user_id=post['author_id'],
+                    user_id=post_author_id,
                     notification_type='like',
                     data={
                         'post_id': post_id,
-                        'post_title': post.get('essay_title', 'your post'),
                         'liker_id': user_id,
                         'liker_name': liker.get('name', 'Someone'),
-                        'liker_avatar': liker.get('avatar')
+                        'liker_avatar': liker.get('avatar'),
+                        'post_title': essay.get('title', 'your post') if essay else 'your post'
                     }
                 )
             
-            return jsonify({'message': 'Post liked', 'liked': True}), 200
-            
+            action = 'liked'
+        
+        return jsonify({'message': f'Post {action}'}), 200
+        
     except Exception as e:
         print(f"❌ Error toggling like: {str(e)}")
         import traceback
@@ -323,29 +331,29 @@ def like_post(post_id):
 
 @posts_bp.route('/posts/<post_id>/check-like', methods=['GET', 'OPTIONS'])
 def check_like_status(post_id):
-    """Check if current user has liked a post"""
+    """Check if user has liked a post"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
-        response.headers.add('Access-Control-Allow-Headers', 'Authorization')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
         response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
         return response, 200
     
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
-        return jsonify({'error': 'No token provided'}), 401
+        return jsonify({'liked': False}), 200
     
     token = auth_header.split(' ')[1]
     user_id = verify_token(token)
     
     if not user_id:
-        return jsonify({'error': 'Invalid token'}), 401
+        return jsonify({'liked': False}), 200
     
     try:
         post = mongo.db.posts.find_one({'_id': ObjectId(post_id)})
         
         if not post:
-            return jsonify({'error': 'Post not found'}), 404
+            return jsonify({'liked': False}), 200
         
         likes = post.get('likes', [])
         liked = user_id in likes
@@ -353,8 +361,8 @@ def check_like_status(post_id):
         return jsonify({'liked': liked}), 200
         
     except Exception as e:
-        print(f"Error checking like status: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        print(f"❌ Error checking like status: {str(e)}")
+        return jsonify({'liked': False}), 200
 
 
 @posts_bp.route('/posts/<post_id>/comment', methods=['POST', 'OPTIONS'])
