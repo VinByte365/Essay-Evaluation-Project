@@ -412,3 +412,41 @@ def get_user_stats(user_id):
         print(f"✅ Returning user data with avatar: {user.get('avatar')}")  # Debug log
         return jsonify({'user': user}), 200
 
+@auth_bp.route('/users/<user_id>', methods=['GET', 'OPTIONS'])
+def get_user_by_id(user_id):
+    """Get user details by ID"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        return response, 200
+    
+    try:
+        # Validate user_id
+        if not ObjectId.is_valid(user_id):
+            return jsonify({'error': 'Invalid user ID'}), 400
+        
+        # Get user from database
+        user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Return user data
+        user_data = {
+            'id': str(user['_id']),
+            'name': user.get('name', 'Unknown'),
+            'email': user.get('email', ''),
+            'avatar': user.get('avatar'),
+            'location': user.get('location'),
+            'bio': user.get('bio')
+        }
+        
+        return jsonify(user_data), 200
+        
+    except Exception as e:
+        print(f"❌ Error fetching user: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Failed to fetch user'}), 500

@@ -54,4 +54,8 @@ def create_app(config_class=Config):
     from app.routes.search import search_bp
     app.register_blueprint(search_bp, url_prefix='/api')
     
+    from app.routes.notifications import notifications_bp
+    app.register_blueprint(notifications_bp, url_prefix='/api')
+
+
     return app

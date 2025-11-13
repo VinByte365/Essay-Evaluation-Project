@@ -1,14 +1,14 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime, timezone
 from app.models import User
+from app.models.notification import Notification  # ✅ Import at top
 from app.routes.auth import verify_token
 from app import mongo
 from bson import ObjectId
 
-
 friends_bp = Blueprint('friends', __name__)
 user_model = User(mongo.db)
-
+notification_model = Notification(mongo.db)  # ✅ Initialize once at top
 
 @friends_bp.route('/friends/request', methods=['POST', 'OPTIONS'])
 def send_friend_request():
@@ -40,11 +40,24 @@ def send_friend_request():
         return jsonify({'error': 'Cannot send friend request to yourself'}), 400
     
     try:
-        # Call the User model method (which has the debug prints)
+        # Call the User model method
         result = user_model.send_friend_request(user_id, receiver_id)
         
         if 'error' in result:
             return jsonify(result), 400
+        
+        # ✅ CREATE NOTIFICATION using global notification_model
+        sender = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+        
+        notification_model.create(
+            user_id=receiver_id,
+            notification_type='friend_request',
+            data={
+                'sender_id': user_id,
+                'sender_name': sender.get('name', 'Someone'),
+                'sender_avatar': sender.get('avatar')
+            }
+        )
         
         return jsonify(result), 200
         
@@ -140,6 +153,7 @@ def get_pending_requests():
 
 @friends_bp.route('/friends/request/<request_id>/accept', methods=['POST', 'OPTIONS'])
 def accept_request(request_id):
+
     """Accept friend request"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
@@ -158,12 +172,41 @@ def accept_request(request_id):
     if not user_id:
         return jsonify({'error': 'Invalid token'}), 401
     
-    result = user_model.accept_friend_request(request_id, user_id)
-    
-    if 'error' in result:
-        return jsonify(result), 400
-    
-    return jsonify(result), 200
+    try:
+        # Get the friend request to find sender_id
+        friend_request = mongo.db.friend_requests.find_one({'_id': ObjectId(request_id)})
+        
+        if not friend_request:
+            return jsonify({'error': 'Friend request not found'}), 404
+        
+        sender_id = friend_request.get('sender_id')
+        
+        # Accept the friend request using user model
+        result = user_model.accept_friend_request(request_id, user_id)
+        
+        if 'error' in result:
+            return jsonify(result), 400
+        
+        # ✅ CREATE NOTIFICATION for the original sender
+        accepter = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+        
+        notification_model.create(
+            user_id=sender_id,
+            notification_type='friend_accept',
+            data={
+                'accepter_id': user_id,
+                'accepter_name': accepter.get('name', 'Someone'),
+                'accepter_avatar': accepter.get('avatar')
+            }
+        )
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        print(f"❌ Error accepting friend request: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 @friends_bp.route('/friends/request/<request_id>/reject', methods=['POST', 'OPTIONS'])
 def reject_request(request_id):
