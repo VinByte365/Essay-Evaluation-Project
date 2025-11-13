@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, make_response
 from werkzeug.utils import secure_filename
 import spacy
 from app.models.essay import Essay
@@ -32,6 +32,16 @@ def extract_text_from_docx(file_stream):
     except Exception as e:
         print(f"Error extracting DOCX: {e}")
         raise Exception("Failed to read DOCX file")
+
+def add_cors_headers(response):
+    """Add CORS headers to response"""
+    response.headers['Access-Control-Allow-Origin'] = '*'  # Allow all origins
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = (
+        'Origin, X-Requested-With, Content-Type, Accept, Authorization'
+    )
+    response.headers['Access-Control-Max-Age'] = '1728000'
+    return response
 
 @api_bp.route('/upload-essay', methods=['POST', 'OPTIONS'])
 def upload_essay():
@@ -614,3 +624,59 @@ def regenerate_statements(essay_id):
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+    
+@api_bp.route('/notifications/mark-all-read', methods=['POST', 'OPTIONS'])
+def mark_all_notifications_read():
+    """Mark all notifications as read for the current user"""
+    if request.method == 'OPTIONS':
+        response = make_response(jsonify({'status': 'ok'}), 200)
+        return add_cors_headers(response)
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        response = make_response(jsonify({'error': 'Authentication required'}), 401)
+        return add_cors_headers(response)
+    
+    token = auth_header.split(' ')[1]
+    user_id = verify_token(token)
+    
+    if not user_id:
+        response = make_response(jsonify({'error': 'Invalid token'}), 401)
+        return add_cors_headers(response)
+    
+    try:
+        # Count how many notifications will be marked as read
+        unread_count = mongo.db.notifications.count_documents({
+            'user_id': user_id, 
+            'read': False
+        })
+        
+        if unread_count > 0:
+            # Update all unread notifications for this user
+            result = mongo.db.notifications.update_many(
+                {'user_id': user_id, 'read': False},
+                {'$set': {'read': True}}
+            )
+            
+            print(f"📝 Marked {result.modified_count} notifications as read for user {user_id}")
+        
+        response_data = {
+            'message': 'All notifications marked as read',
+            'marked_count': unread_count,
+            'read': True,
+            'success': True
+        }
+        
+        response = make_response(jsonify(response_data), 200)
+        return add_cors_headers(response)
+        
+    except Exception as e:
+        print(f"❌ Error marking all notifications as read: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        response = make_response(jsonify({
+            'error': 'Failed to mark notifications as read',
+            'details': str(e)
+        }), 500)
+        return add_cors_headers(response)

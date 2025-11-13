@@ -76,7 +76,7 @@ SUGGESTIONS:
 OVERALL FEEDBACK: [Write 2-3 comprehensive sentences summarizing strengths and areas for improvement]
 
 
-Remember: Fill out EVERY section above. Be specific and helpful."""
+Remember: Fill out EVERY section above. Be specific and helpful. Return those data BASED on the language used in the uploaded essay"""
 
 
         try:
